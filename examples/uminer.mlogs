@@ -1,0 +1,42 @@
+
+cfg unitType = Units.mono
+cfg targetOre = Items.copper
+cfg minHealthFrac = 0.7
+cfg approachDistance = 6
+cfg repairApproachDistance = 5
+cfg minPower = 60
+
+loop {
+  ubind(unitType)
+  if(@unit) break
+}
+val minHealth = @unit.maxHealth * minHealthFrac
+val returnItemCount = @unit.itemCapacity - 1 //the unit will probably mine one more item by the time it moves far enough away to stop mining
+
+loop {
+  ubind(unitType)
+  if(@unit.flag != 0) continue
+
+  ucontrol.boost(true)
+
+  if(@unit.health < minHealth){
+    val target = ulocate.building.repair()
+    if(!target || target.powerNetIn > minPower) target = ulocate.building.core()
+    ucontrol.approach(target.x, target.y, repairApproachDistance)
+    continue
+  }
+
+  if(
+    @unit.totalItems >= returnItemCount ||
+    (!mining && @unit.firstItem != null && @unit.firstItem != targetOre)
+  ){
+    val core = ulocate.building.core()
+    ucontrol.move(core.x, core.y)
+    ucontrol.itemDrop(core, 1e10)
+    continue
+  }
+
+  val ore = ulocate.ore(targetOre)
+  ucontrol.approach(ore.x, ore.y, approachDistance)
+  ucontrol.mine(ore.x, ore.y)
+}

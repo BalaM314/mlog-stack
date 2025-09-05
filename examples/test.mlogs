@@ -1,0 +1,53 @@
+print("Hello, world!")
+printflush(`message1`)
+
+
+fn factorial(x: num): num {
+  if(x <= 1) return 1
+  return x * factorial(x - 1)
+}
+
+val copper /*: num */ = `container1`.copper
+print(factorial(copper))
+printflush(`message1`)
+
+var output = `message1`
+if(output.dead) output = `message2`
+print("This message block is at ${output.x}, ${output.y}")
+printflush(output)
+
+// ~= for loose equals operator, == for strict equals
+
+for(var i = 0; i < 100; i ++){
+  if(i % 15 == 0) print("FizzBuzz")
+  else if(i % 5 == 0) print("Buzz")
+  else if(i % 3 == 0) print("Fizz")
+  else print(i)
+}
+
+//static: use one variable for all function calls
+//set arg1 5
+//jmp
+//
+//stack: put the argument on the stack
+//push 5
+//jmp
+//
+//static reference: replace the parameter name with the argument name in the function emitted code
+//jmp
+//
+//pointer: pass a pointer
+//push 123
+//jmp
+
+//static has 1 instruction overhead
+//stack has serialization overhead
+//static reference has 0 overhead
+
+//attempt to optimize to static reference (if the parameter is not mutated) or static (if there are no recursive calls), use stack only when necessary
+
+//variables can be stored as a literal variable, or stored on the stack
+//deserialization needs to be inserted whenever the variable could have been changed
+
+fun example(static arg1: unit, arg2: build, *static arg3: block, arg4: *num){}
+
