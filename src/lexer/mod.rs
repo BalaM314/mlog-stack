@@ -247,8 +247,7 @@ pub fn lexer(input:&str) -> Vec<Token> {
 	out
 }
 
-/// for use in tests only
-pub mod util {
+pub mod test_utils {
 	use super::*;
 
 	pub struct TokenBuilder(usize);
@@ -256,17 +255,52 @@ pub mod util {
 		pub fn new() -> Self {
 			TokenBuilder(0)
 		}
-		pub fn token(&mut self, text: &'static str, variant: TokenType) -> Token {
+		pub fn token(&mut self, text: impl Into<String>, variant: TokenType) -> Token {
+			let text = text.into();
 			let start = self.0;
 			let end = self.0 + text.len();
 			self.0 = end;
-			Token { span: start..end, text: String::from(text), variant }
+			Token { span: start..end, text, variant }
 		}
-		pub fn token_last(&mut self, text: &'static str, variant: TokenType) -> Token {
+		pub fn token_last(&mut self, text: impl Into<String>, variant: TokenType) -> Token {
 			let result = self.token(text, variant);
 			self.0 = 0;
 			result
 		}
+		pub fn newline(&mut self) -> Token { self.token("\n", TokenType::newline) }
+		pub fn newline_last(&mut self) -> Token { self.token_last("\n", TokenType::newline) }
+		pub fn kif(&mut self) -> Token { self.token("if", TokenType::keyword_if) }
+		pub fn kfor(&mut self) -> Token { self.token("for", TokenType::keyword_for) }
+		pub fn kloop(&mut self) -> Token { self.token("loop", TokenType::keyword_loop) }
+		pub fn kfn(&mut self) -> Token { self.token("fn", TokenType::keyword_fn) }
+		pub fn kreturn(&mut self) -> Token { self.token("return", TokenType::keyword_return) }
+		pub fn kvar(&mut self) -> Token { self.token("var", TokenType::keyword_var) }
+		pub fn kval(&mut self) -> Token { self.token("val", TokenType::keyword_val) }
+		pub fn kcfg(&mut self) -> Token { self.token("cfg", TokenType::keyword_cfg) }
+		pub fn popen(&mut self) -> Token { self.token("(", TokenType::parenthesis_open) }
+		pub fn pclose(&mut self) -> Token { self.token(")", TokenType::parenthesis_close) }
+		pub fn bopen(&mut self) -> Token { self.token("{", TokenType::brace_open) }
+		pub fn bclose(&mut self) -> Token { self.token("}", TokenType::brace_close) }
+		pub fn colon(&mut self) -> Token { self.token(":", TokenType::punctuation_colon) }
+		pub fn semicolon(&mut self) -> Token { self.token(";", TokenType::punctuation_semicolon) }
+		pub fn period(&mut self) -> Token { self.token(".", TokenType::punctuation_period) }
+		pub fn assign(&mut self) -> Token { self.token("<=", TokenType::operator_assignment) }
+		pub fn eq(&mut self) -> Token { self.token("<=", TokenType::operator_equal_to) }
+		pub fn loose_eq(&mut self) -> Token { self.token("<=", TokenType::operator_loose_equal_to) }
+		pub fn ne(&mut self) -> Token { self.token("<=", TokenType::operator_not_equal_to) }
+		pub fn gt(&mut self) -> Token { self.token("<=", TokenType::operator_greater_than) }
+		pub fn lt(&mut self) -> Token { self.token("<=", TokenType::operator_less_than) }
+		pub fn ge(&mut self) -> Token { self.token("<=", TokenType::operator_greater_than_eq) }
+		pub fn le(&mut self) -> Token { self.token("<=", TokenType::operator_less_than_eq) }
+		pub fn add(&mut self) -> Token { self.token("<=", TokenType::operator_add) }
+		pub fn minus(&mut self) -> Token { self.token("<=", TokenType::operator_minus) }
+		pub fn mult(&mut self) -> Token { self.token("<=", TokenType::operator_multiply) }
+		pub fn div(&mut self) -> Token { self.token("<=", TokenType::operator_divide) }
+		pub fn modulo(&mut self) -> Token { self.token("<=", TokenType::operator_modulo) }
+		pub fn num(&mut self, number:&str) -> Token { self.token(number, TokenType::number) }
+		pub fn ident(&mut self, ident:impl Into<String>) -> Token { self.token(ident, TokenType::identifier) }
+		pub fn str(&mut self, ident:impl Into<String>) -> Token { self.token(format!("\"{}\"", ident.into()), TokenType::string) }
+		pub fn link(&mut self, ident:impl Into<String>) -> Token { self.token(format!("`{}`", ident.into()), TokenType::string) }
 	}
 }
 
