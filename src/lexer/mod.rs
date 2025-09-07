@@ -4,20 +4,21 @@ use std::ops::Range;
 use itertools::Itertools;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Token {
-	text: String,
-	variant: TokenType,
-	span: Span,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SubToken {
-	text: String,
-	variant: SubTokenType,
-	span: Span,
+pub struct Token {
+	pub text: String,
+	pub variant: TokenType,
+	pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TokenType {
+pub struct SubToken {
+	pub text: String,
+	pub variant: SubTokenType,
+	pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenType {
 	newline,
 	number,
 	identifier,
@@ -86,7 +87,7 @@ enum SubTokenType {
 	punctuation_period,
 }
 
-type Span = Range<usize>;
+pub type Span = Range<usize>;
 
 fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 	let mut out = vec![];
@@ -244,6 +245,29 @@ pub fn lexer(input:&str) -> Vec<Token> {
 		}});
 	}
 	out
+}
+
+/// for use in tests only
+pub mod util {
+	use super::*;
+
+	pub struct TokenBuilder(usize);
+	impl TokenBuilder {
+		pub fn new() -> Self {
+			TokenBuilder(0)
+		}
+		pub fn token(&mut self, text: &'static str, variant: TokenType) -> Token {
+			let start = self.0;
+			let end = self.0 + text.len();
+			self.0 = end;
+			Token { span: start..end, text: String::from(text), variant }
+		}
+		pub fn token_last(&mut self, text: &'static str, variant: TokenType) -> Token {
+			let result = self.token(text, variant);
+			self.0 = 0;
+			result
+		}
+	}
 }
 
 #[cfg(test)]
