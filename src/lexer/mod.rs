@@ -40,6 +40,8 @@ pub enum TokenType {
 	operator_less_than,
 	operator_greater_than_eq,
 	operator_less_than_eq,
+	operator_and,
+	operator_or,
 	operator_add,
 	operator_minus,
 	operator_multiply,
@@ -52,6 +54,7 @@ pub enum TokenType {
 	punctuation_colon,
 	punctuation_semicolon,
 	punctuation_period,
+	punctuation_comma,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +73,8 @@ enum SubTokenType {
 	operator_less_than,
 	operator_greater_than_eq,
 	operator_less_than_eq,
+	operator_and,
+	operator_or,
 	operator_add,
 	operator_minus,
 	operator_multiply,
@@ -85,6 +90,7 @@ enum SubTokenType {
 	punctuation_colon,
 	punctuation_semicolon,
 	punctuation_period,
+	punctuation_comma,
 }
 
 pub type Span = Range<usize>;
@@ -154,6 +160,20 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 				},
 				_ => panic!("Invalid char ~")
 			},
+			'&' => match chars.peek() {
+				Some((_, '&')) => {
+					chars.next();
+					(2, ST::operator_and)
+				},
+				_ => panic!("bitwise and is unimplemented"),
+			},
+			'|' => match chars.peek() {
+				Some((_, '|')) => {
+					chars.next();
+					(2, ST::operator_or)
+				},
+				_ => panic!("bitwise or is unimplemented"),
+			},
 			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| c.is_alphanumeric() || *c == '_' || *c == '@').count() + 1, ST::word),
 			'0'..='9' => (chars.peeking_take_while(|(_, c)| c.is_numeric()).count() + 1, ST::numeric_fragment),
 			_ => panic!("Invalid char {char}")
@@ -179,6 +199,8 @@ pub fn lexer(input:&str) -> Vec<Token> {
 			ST::operator_less_than => TokenType::operator_less_than,
 			ST::operator_greater_than_eq => TokenType::operator_greater_than_eq,
 			ST::operator_less_than_eq => TokenType::operator_less_than_eq,
+			ST::operator_and => TokenType::operator_and,
+			ST::operator_or => TokenType::operator_or,
 			ST::operator_add => TokenType::operator_add,
 			ST::operator_minus => TokenType::operator_minus,
 			ST::operator_multiply => TokenType::operator_multiply,
@@ -191,6 +213,7 @@ pub fn lexer(input:&str) -> Vec<Token> {
 			ST::punctuation_colon => TokenType::punctuation_colon,
 			ST::punctuation_semicolon => TokenType::punctuation_semicolon,
 			ST::punctuation_period => TokenType::punctuation_period,
+			ST::punctuation_comma => TokenType::punctuation_comma,
 			ST::newline => TokenType::newline,
 			ST::escape => panic!("Unexpected escape character"),
 			ST::numeric_fragment => match sub_tokens.peek() {
@@ -284,19 +307,19 @@ pub mod test_utils {
 		pub fn colon(&mut self) -> Token { self.token(":", TokenType::punctuation_colon) }
 		pub fn semicolon(&mut self) -> Token { self.token(";", TokenType::punctuation_semicolon) }
 		pub fn period(&mut self) -> Token { self.token(".", TokenType::punctuation_period) }
-		pub fn assign(&mut self) -> Token { self.token("<=", TokenType::operator_assignment) }
-		pub fn eq(&mut self) -> Token { self.token("<=", TokenType::operator_equal_to) }
-		pub fn loose_eq(&mut self) -> Token { self.token("<=", TokenType::operator_loose_equal_to) }
-		pub fn ne(&mut self) -> Token { self.token("<=", TokenType::operator_not_equal_to) }
-		pub fn gt(&mut self) -> Token { self.token("<=", TokenType::operator_greater_than) }
-		pub fn lt(&mut self) -> Token { self.token("<=", TokenType::operator_less_than) }
-		pub fn ge(&mut self) -> Token { self.token("<=", TokenType::operator_greater_than_eq) }
+		pub fn assign(&mut self) -> Token { self.token("=", TokenType::operator_assignment) }
+		pub fn eq(&mut self) -> Token { self.token("==", TokenType::operator_equal_to) }
+		pub fn loose_eq(&mut self) -> Token { self.token("~=", TokenType::operator_loose_equal_to) }
+		pub fn ne(&mut self) -> Token { self.token("!=", TokenType::operator_not_equal_to) }
+		pub fn gt(&mut self) -> Token { self.token(">", TokenType::operator_greater_than) }
+		pub fn lt(&mut self) -> Token { self.token("<", TokenType::operator_less_than) }
+		pub fn ge(&mut self) -> Token { self.token(">=", TokenType::operator_greater_than_eq) }
 		pub fn le(&mut self) -> Token { self.token("<=", TokenType::operator_less_than_eq) }
-		pub fn add(&mut self) -> Token { self.token("<=", TokenType::operator_add) }
-		pub fn minus(&mut self) -> Token { self.token("<=", TokenType::operator_minus) }
-		pub fn mult(&mut self) -> Token { self.token("<=", TokenType::operator_multiply) }
-		pub fn div(&mut self) -> Token { self.token("<=", TokenType::operator_divide) }
-		pub fn modulo(&mut self) -> Token { self.token("<=", TokenType::operator_modulo) }
+		pub fn add(&mut self) -> Token { self.token("+", TokenType::operator_add) }
+		pub fn minus(&mut self) -> Token { self.token("-", TokenType::operator_minus) }
+		pub fn mult(&mut self) -> Token { self.token("*", TokenType::operator_multiply) }
+		pub fn div(&mut self) -> Token { self.token("/", TokenType::operator_divide) }
+		pub fn modulo(&mut self) -> Token { self.token("%", TokenType::operator_modulo) }
 		pub fn num(&mut self, number:&str) -> Token { self.token(number, TokenType::number) }
 		pub fn ident(&mut self, ident:impl Into<String>) -> Token { self.token(ident, TokenType::identifier) }
 		pub fn str(&mut self, ident:impl Into<String>) -> Token { self.token(format!("\"{}\"", ident.into()), TokenType::string) }
