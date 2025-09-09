@@ -1,4 +1,4 @@
-use std::iter::Peekable;
+use std::{fmt::{Debug, Display}, iter::Peekable};
 
 use itertools::Itertools;
 
@@ -124,6 +124,101 @@ impl Into<ASTExpression> for ASTExpressionBuilder {
 		}
 	}
 }
+
+fn display_statements(statements: &Vec<ASTNode>) -> String {
+	statements.iter().map(|s| format!("{s}")).join("\n")
+}
+
+fn indent_string(x:String) -> String {
+	x.split('\n').map(|s| format!("  {s}")).join("\n")
+}
+
+impl Display for ASTBlock {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			ASTBlock::If { condition, statements } =>
+				write!(f, "if {condition} {{\n{}\n}}", indent_string(display_statements(statements))),
+			ASTBlock::Loop { statements } =>
+				write!(f, "loop {{\n{}\n}}", indent_string(display_statements(statements))),
+			ASTBlock::For { declaration, condition, increment, statements } =>
+				write!(f, "for({declaration};{condition};{}){{\n{}\n}}", match increment {
+					Some(increment) => format!("{increment}"),
+					_ => "".to_string(),
+				}, indent_string(display_statements(statements))),
+			ASTBlock::While { condition, statements } =>
+				write!(f, "while({condition}){{\n{}\n}}", indent_string(display_statements(statements))),
+			ASTBlock::Function { name, arguments, return_type, statements } =>
+				write!(f, "fn {name}({}", arguments.iter().map(|(name, typ)| format!("{name}: {typ}")).join(", ")),
+			ASTBlock::Root { statements } =>
+				write!(f, "{}", display_statements(statements)),
+		}
+	}
+}
+
+impl Display for ASTStatement {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			ASTStatement::Expression(expr) => write!(f, "{expr}"),
+			ASTStatement::Declaration(declaration) => write!(f, "{declaration}"),
+			ASTStatement::Break => write!(f, "break"),
+			ASTStatement::Continue => write!(f, "continue"),
+			ASTStatement::Return(expr) => match expr {
+				Some(expr) => write!(f, "return {expr}"),
+				None => write!(f, "return"),
+			},
+		}
+	}
+}
+
+impl Display for ASTExpression {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			ASTExpression::Leaf(token) => write!(f, "{token}"),
+			ASTExpression::UnaryOperator { operator, operand } => write!(f, "({operator} {operand})"),
+			ASTExpression::BinaryOperator { left, operator, right } => write!(f, "({left} {operator} {right})"),
+			ASTExpression::FunctionCall { function, arguments } =>
+				write!(f, "{function}({})", arguments.iter().map(|a| format!("{a}")).join(", ")),
+		}
+	}
+}
+
+impl Display for Declaration {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let typ = match &self.typ {
+			Some(typ) => format!(": {typ}"),
+			None => "".to_string(),
+		};
+		write!(f, "{} {}{typ} = {}", match self.binding {
+			DeclarationType::Var => "var",
+			DeclarationType::Val => "val",
+			DeclarationType::Cfg => "cfg",
+		}, self.identifier, self.value)
+	}
+}
+
+impl Display for ASTType {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			ASTType::Literal(token) => Display::fmt(token, f)
+		}
+	}
+}
+
+impl Display for ASTNode {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		Display::fmt(&self.data, f)
+	}
+}
+
+impl Display for ASTNodeData {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			ASTNodeData::Block(block) => Display::fmt(block, f),
+			ASTNodeData::Statement(statement) => Display::fmt(statement, f),
+		}
+	}
+}
+
 
 ///operator must be an operator
 fn operator_priority(operator:TokenType) -> u8 {
