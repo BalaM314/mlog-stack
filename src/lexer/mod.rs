@@ -47,6 +47,7 @@ pub enum TokenType {
 	keyword_val,
 	keyword_cfg,
 	operator_assignment,
+	operator_not,
 	operator_equal_to,
 	operator_loose_equal_to,
 	operator_not_equal_to,
@@ -61,13 +62,13 @@ pub enum TokenType {
 	operator_multiply,
 	operator_divide,
 	operator_modulo,
+	operator_access,
 	parenthesis_open,
 	parenthesis_close,
 	brace_open,
 	brace_close,
 	punctuation_colon,
 	punctuation_semicolon,
-	punctuation_period,
 	punctuation_comma,
 }
 
@@ -75,11 +76,16 @@ pub enum TokenType {
 pub enum SubTokenType {
 	escape,
 	numeric_fragment,
+	numeric_e,
+	numeric_x,
+	numeric_b,
+	numeric_o,
 	whitespace,
 	newline,
 	word,
 	comment_singleline,
 	operator_assignment,
+	operator_not,
 	operator_equal_to,
 	operator_loose_equal_to,
 	operator_not_equal_to,
@@ -94,6 +100,7 @@ pub enum SubTokenType {
 	operator_multiply,
 	operator_divide,
 	operator_modulo,
+	operator_access,
 	parenthesis_open,
 	parenthesis_close,
 	brace_open,
@@ -103,14 +110,13 @@ pub enum SubTokenType {
 	quote_backtick,
 	punctuation_colon,
 	punctuation_semicolon,
-	punctuation_period,
 	punctuation_comma,
 }
 
 pub type Span = Range<usize>;
 
 fn get_sub_tokens(input:&str) -> Vec<SubToken> {
-	let mut out = vec![];
+	let mut out: Vec<SubToken> = vec![];
 	let mut chars = input.chars().enumerate().peekable();
 	while let Some((i, char)) = chars.next() {
 		use SubTokenType as ST;
@@ -129,7 +135,7 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 			'`' => (1, ST::quote_backtick),
 			':' => (1, ST::punctuation_colon),
 			';' => (1, ST::punctuation_semicolon),
-			'.' => (1, ST::punctuation_period),
+			'.' => (1, ST::operator_access),
 			',' => (1, ST::punctuation_comma),
 			' ' => (1, ST::whitespace),
 			'\n' => (1, ST::newline),
@@ -166,7 +172,7 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 					chars.next();
 					(2, ST::operator_not_equal_to)
 				},
-				_ => panic!("Invalid char !")
+				_ => (1, ST::operator_not),
 			},
 			'~' => match chars.peek() {
 				Some((_, '=')) => {
@@ -189,6 +195,10 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 				},
 				_ => panic!("bitwise or is unimplemented"),
 			},
+			'e' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_e),
+			'x' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_x),
+			'b' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_b),
+			'o' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_o),
 			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| c.is_alphanumeric() || *c == '_' || *c == '@').count() + 1, ST::word),
 			'0'..='9' => (chars.peeking_take_while(|(_, c)| c.is_numeric()).count() + 1, ST::numeric_fragment),
 			_ => panic!("Invalid char {char}")
@@ -207,6 +217,7 @@ pub fn lexer(input:&str) -> Vec<Token> {
 		use SubTokenType as ST;
 		out.push(Token { text: st.text.clone(), span: st.span.clone(), variant: match st.variant {
 			ST::operator_assignment => TokenType::operator_assignment,
+			ST::operator_not => TokenType::operator_not,
 			ST::operator_equal_to => TokenType::operator_equal_to,
 			ST::operator_loose_equal_to => TokenType::operator_loose_equal_to,
 			ST::operator_not_equal_to => TokenType::operator_not_equal_to,
@@ -227,12 +238,12 @@ pub fn lexer(input:&str) -> Vec<Token> {
 			ST::brace_close => TokenType::brace_close,
 			ST::punctuation_colon => TokenType::punctuation_colon,
 			ST::punctuation_semicolon => TokenType::punctuation_semicolon,
-			ST::punctuation_period => TokenType::punctuation_period,
+			ST::operator_access => TokenType::operator_access,
 			ST::punctuation_comma => TokenType::punctuation_comma,
 			ST::newline => TokenType::newline,
 			ST::escape => panic!("Unexpected escape character"),
 			ST::numeric_fragment => match sub_tokens.peek() {
-				Some(SubToken { variant: ST::punctuation_period, .. }) => {
+				Some(SubToken { variant: ST::operator_access, .. }) => {
 					sub_tokens.next();
 					match sub_tokens.peek() {
 						Some(SubToken { variant: ST::numeric_fragment, span: span2, .. }) => {
@@ -244,8 +255,21 @@ pub fn lexer(input:&str) -> Vec<Token> {
 						_ => panic!("Invalid numeric literal: Expected more digits after the decimal point")
 					}
 				},
+				Some(SubToken { variant: ST::numeric_e | ST::numeric_b | ST::numeric_o | ST::numeric_x, .. }) => {
+					sub_tokens.next();
+					match sub_tokens.peek() {
+						Some(SubToken { variant: ST::numeric_fragment, span: span2, .. }) => {
+							let span = st.span.start..span2.end;
+							out.push(Token { text: input[span.clone()].to_string(), variant: TokenType::number, span });
+							sub_tokens.next();
+							continue;
+						},
+						x => panic!("Invalid numeric literal: Expected more digits after the character, got {x:?}")
+					}
+				},
 				_ => TokenType::number
 			},
+			ST::numeric_e | ST::numeric_b | ST::numeric_o | ST::numeric_x => panic!("Invalid numeric literal: numeric literals can only contain one non-numeric character, like b e o x"),
 			ST::whitespace => continue,
 			ST::word => match &st.text[..] {
 				"if" => TokenType::keyword_if,
@@ -322,7 +346,7 @@ pub mod test_utils {
 		pub fn bclose(&mut self) -> Token { self.token("}", TokenType::brace_close) }
 		pub fn colon(&mut self) -> Token { self.token(":", TokenType::punctuation_colon) }
 		pub fn semicolon(&mut self) -> Token { self.token(";", TokenType::punctuation_semicolon) }
-		pub fn period(&mut self) -> Token { self.token(".", TokenType::punctuation_period) }
+		pub fn period(&mut self) -> Token { self.token(".", TokenType::operator_access) }
 		pub fn assign(&mut self) -> Token { self.token("=", TokenType::operator_assignment) }
 		pub fn eq(&mut self) -> Token { self.token("==", TokenType::operator_equal_to) }
 		pub fn loose_eq(&mut self) -> Token { self.token("~=", TokenType::operator_loose_equal_to) }
@@ -377,7 +401,7 @@ mod tests {
 				SubToken { text: String::from("\""), variant: ST::quote_double, span: 13..14 },
 				SubToken { text: String::from(" "), variant: ST::whitespace, span: 14..15 },
 				SubToken { text: String::from("world"), variant: ST::word, span: 15..20 },
-				SubToken { text: String::from("."), variant: ST::punctuation_period, span: 20..21 },
+				SubToken { text: String::from("."), variant: ST::operator_access, span: 20..21 },
 				SubToken { text: String::from("\""), variant: ST::quote_double, span: 21..22 },
 				SubToken { text: String::from(")"), variant: ST::parenthesis_close, span: 22..23 },
 				SubToken { text: String::from(";"), variant: ST::punctuation_semicolon, span: 23..24 },

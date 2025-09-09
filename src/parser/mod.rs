@@ -224,7 +224,8 @@ impl Display for ASTNodeData {
 fn operator_priority(operator:TokenType) -> u8 {
 	use TokenType as TT;
 	match operator {
-		// TT::operator_not => 6,
+		TT::operator_access => 7,
+		TT::operator_not => 6,
 		TT::operator_multiply => 5,
 		TT::operator_divide => 5,
 		TT::operator_modulo => 5,
@@ -324,6 +325,17 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> AS
 						if nest_level < 0 { break }
 						tokens.next();
 					},
+					TT::operator_minus if expr.is_none() => {
+						let operator = tokens.next().unwrap();
+						let right = get_leaf_node_or_paren_nodes(tokens);
+						expr = Some(ASTExpressionBuilder::UnaryOperator { operator, operand: Box::new(right), is_paren: false });
+					},
+					TT::operator_not => {
+						if expr.is_some() { panic!("Expected operator or end of expression, not unary operator") }
+						let operator = tokens.next().unwrap();
+						let right = get_leaf_node_or_paren_nodes(tokens);
+						expr = Some(ASTExpressionBuilder::UnaryOperator { operator, operand: Box::new(right), is_paren: false });
+					},
 					TT::operator_assignment |
 					TT::operator_equal_to |
 					TT::operator_loose_equal_to |
@@ -338,6 +350,7 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> AS
 					TT::operator_multiply |
 					TT::operator_divide |
 					TT::operator_modulo |
+					TT::operator_access |
 					TT::operator_minus => {
 						let left = expr.take().expect("Unexpected binary operator with no preceding expression");
 						let operator = tokens.next().unwrap();
@@ -478,6 +491,7 @@ fn parse_statements(tokens: Vec<Token>) -> Vec<ASTNode> {
 			TT::operator_add |
 			TT::operator_multiply |
 			TT::operator_divide |
+			TT::operator_access |
 			TT::operator_modulo => panic!("Unexpected binary operator with no preceding expression"),
 			TT::punctuation_semicolon => panic!("Duplicate or unnecessary semicolon"),
 
