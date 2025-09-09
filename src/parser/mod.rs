@@ -191,6 +191,8 @@ impl Display for ASTExpression {
 		match self {
 			ASTExpression::Leaf(token) => write!(f, "{token}"),
 			ASTExpression::UnaryOperator { operator, operand } => write!(f, "({operator} {operand})"),
+			ASTExpression::BinaryOperator { left, operator, right } if operator.variant == TokenType::operator_access =>
+				write!(f, "{left}.{right}"),
 			ASTExpression::BinaryOperator { left, operator, right } => write!(f, "({left} {operator} {right})"),
 			ASTExpression::FunctionCall { function, arguments } =>
 				write!(f, "{function}({})", arguments.iter().map(|a| format!("{a}")).join(", ")),
@@ -318,7 +320,6 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 			let mut expr: Option<ASTExpressionBuilder> = None;
 			loop {
 				let Some(next) = tokens.peek() else { break };
-				dbg!(next);
 				match next.variant {
 					TT::parenthesis_open => match expr {
 						Some(e) => {
