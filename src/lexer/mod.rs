@@ -41,8 +41,11 @@ pub enum TokenType {
 	keyword_if,
 	keyword_for,
 	keyword_loop,
+	keyword_while,
 	keyword_fn,
 	keyword_return,
+	keyword_break,
+	keyword_continue,
 	keyword_var,
 	keyword_val,
 	keyword_cfg,
@@ -58,6 +61,7 @@ pub enum TokenType {
 	operator_and,
 	operator_or,
 	operator_add,
+	operator_increment,
 	operator_minus,
 	operator_multiply,
 	operator_divide,
@@ -70,6 +74,7 @@ pub enum TokenType {
 	punctuation_colon,
 	punctuation_semicolon,
 	punctuation_comma,
+	punctuation_interpolate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +89,8 @@ pub enum SubTokenType {
 	newline,
 	word,
 	comment_singleline,
+	comment_start,
+	comment_end,
 	operator_assignment,
 	operator_not,
 	operator_equal_to,
@@ -96,6 +103,7 @@ pub enum SubTokenType {
 	operator_and,
 	operator_or,
 	operator_add,
+	operator_increment,
 	operator_minus,
 	operator_multiply,
 	operator_divide,
@@ -111,6 +119,7 @@ pub enum SubTokenType {
 	punctuation_colon,
 	punctuation_semicolon,
 	punctuation_comma,
+	punctuation_dollar,
 }
 
 pub type Span = Range<usize>;
@@ -122,9 +131,21 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 		use SubTokenType as ST;
 		let (len, variant) = match char {
 			'\\' => (1, ST::escape),
-			'+' => (1, ST::operator_add),
+			'+' => match chars.peek() {
+				Some((_, '+')) => {
+					chars.next();
+					(2, ST::operator_increment)
+				}
+				_ => (1, ST::operator_add),
+			},
 			'-' => (1, ST::operator_minus),
-			'*' => (1, ST::operator_multiply),
+			'*' => match chars.peek() {
+				Some((_, '/')) => {
+					chars.next();
+					(2, ST::comment_end)
+				}
+				_ => (1, ST::operator_multiply)
+			},
 			'%' => (1, ST::operator_modulo),
 			'(' => (1, ST::parenthesis_open),
 			')' => (1, ST::parenthesis_close),
@@ -143,6 +164,10 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 				Some((_, '/')) => {
 					chars.next();
 					(2, ST::comment_singleline)
+				},
+				Some((_, '*')) => {
+					chars.next();
+					(2, ST::comment_start)
 				},
 				_ => (1, ST::operator_divide),
 			},
@@ -199,7 +224,8 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 			'x' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_x),
 			'b' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_b),
 			'o' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_o),
-			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| c.is_alphanumeric() || *c == '_' || *c == '@').count() + 1, ST::word),
+			'$' => (1, ST::punctuation_dollar),
+			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| matches!(c, 'a'..='z' | 'A'..='Z' | '_' | '@' | '$')).count() + 1, ST::word),
 			'0'..='9' => (chars.peeking_take_while(|(_, c)| c.is_numeric()).count() + 1, ST::numeric_fragment),
 			_ => panic!("Invalid char {char}")
 		};
@@ -228,6 +254,7 @@ pub fn lexer(input:&str) -> Vec<Token> {
 			ST::operator_and => TokenType::operator_and,
 			ST::operator_or => TokenType::operator_or,
 			ST::operator_add => TokenType::operator_add,
+			ST::operator_increment => TokenType::operator_increment,
 			ST::operator_minus => TokenType::operator_minus,
 			ST::operator_multiply => TokenType::operator_multiply,
 			ST::operator_divide => TokenType::operator_divide,
@@ -242,6 +269,15 @@ pub fn lexer(input:&str) -> Vec<Token> {
 			ST::punctuation_comma => TokenType::punctuation_comma,
 			ST::newline => TokenType::newline,
 			ST::escape => panic!("Unexpected escape character"),
+			ST::punctuation_dollar => match sub_tokens.peek() {
+				Some(SubToken { variant: ST::word, span: span2, .. }) => {
+					let span = st.span.start..span2.end;
+					out.push(Token { text: input[span.clone()].to_string(), variant: TokenType::identifier, span });
+					sub_tokens.next();
+					continue
+				},
+				_ => TokenType::identifier,
+			},
 			ST::numeric_fragment => match sub_tokens.peek() {
 				Some(SubToken { variant: ST::operator_access, .. }) => {
 					sub_tokens.next();
@@ -275,8 +311,11 @@ pub fn lexer(input:&str) -> Vec<Token> {
 				"if" => TokenType::keyword_if,
 				"for" => TokenType::keyword_for,
 				"loop" => TokenType::keyword_loop,
+				"while" => TokenType::keyword_while,
 				"fn" => TokenType::keyword_fn,
 				"return" => TokenType::keyword_return,
+				"break" => TokenType::keyword_break,
+				"continue" => TokenType::keyword_continue,
 				"var" => TokenType::keyword_var,
 				"val" => TokenType::keyword_val,
 				"cfg" => TokenType::keyword_cfg,
@@ -286,11 +325,24 @@ pub fn lexer(input:&str) -> Vec<Token> {
 				sub_tokens.peeking_take_while(|st| st.variant != ST::newline).count();
 				continue;
 			},
+			ST::comment_start => {
+				sub_tokens.peeking_take_while(|st| st.variant != ST::comment_end).count();
+				sub_tokens.next().expect("Unterminated multiline comment");
+				continue;
+			},
+			ST::comment_end => panic!("Unexpected token, no multiline comment to end"),
 			ST::quote_double | ST::quote_single | ST::quote_backtick => {
 				while let Some(st2) = sub_tokens.next() {
 					if st2.variant == ST::escape { 
 						sub_tokens.next(); //if this is none, that's fine, the loop will exit and it will be treated as an unterminated string literal
 					}
+					// TODO: string interpolation
+					// if st2.variant == ST::punctuation_dollar { match sub_tokens.peek() {
+					// 	Some(SubToken { variant: ST::brace_open, .. }) => {
+					// 		sub_tokens.next();
+					// 	},
+					// 	_ => {}
+					// }}
 					if st2.variant == st.variant {
 						let span = st.span.start..st2.span.end;
 						out.push(Token {

@@ -18,7 +18,7 @@ printflush(output)
 
 // ~= for loose equals operator, == for strict equals
 
-for(var i = 0; i < 100; i ++){
+for(var i = 0; i < 100; ++ i){
   if(i % 15 == 0) print("FizzBuzz")
   else if(i % 5 == 0) print("Buzz")
   else if(i % 3 == 0) print("Fizz")
@@ -49,5 +49,5 @@ for(var i = 0; i < 100; i ++){
 //variables can be stored as a literal variable, or stored on the stack
 //deserialization needs to be inserted whenever the variable could have been changed
 
-fun example(static arg1: unit, arg2: build, *static arg3: block, arg4: *num){}
+//fn example(static arg1: unit, arg2: build, *static arg3: block, arg4: *num){}
 

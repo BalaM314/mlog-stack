@@ -243,6 +243,7 @@ fn operator_priority(operator:TokenType) -> u8 {
 	use TokenType as TT;
 	match operator {
 		TT::operator_access => 7,
+		TT::operator_increment => 6,
 		TT::operator_not => 6,
 		TT::operator_multiply => 5,
 		TT::operator_divide => 5,
@@ -268,14 +269,14 @@ fn get_leaf_node_or_paren_nodes(tokens:&mut Peekable<impl Iterator<Item = Token>
 	tokens.peeking_take_while(|t| t.variant == TT::newline).count(); //skip all newlines
 	let token = tokens.next().expect("Unexpected EOF");
 	match token.variant {
-		TT::identifier | TT::link | TT::number | TT::operator_minus | TT::string => ASTExpressionBuilder::Leaf(token),
+		TT::identifier | TT::link | TT::number | TT::string => ASTExpressionBuilder::Leaf(token),
 		TT::parenthesis_open => {
 			let mut expr = get_expression_inner(tokens, true);
 			require_type(tokens, TokenType::parenthesis_close);
 			expr.set_paren();
 			expr
 		},
-		_ => panic!("Unexpected token: expected a leaf node or the start of an expression"),
+		t => panic!("Unexpected token: expected a leaf node or the start of an expression, got {t:?}"),
 	}
 }
 
@@ -351,7 +352,7 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 						let right = get_leaf_node_or_paren_nodes(tokens);
 						expr = Some(ASTExpressionBuilder::UnaryOperator { operator, operand: Box::new(right), is_paren: false });
 					},
-					TT::operator_not => {
+					TT::operator_not | TT::operator_increment => {
 						if expr.is_some() { panic!("Expected operator or end of expression, not unary operator") }
 						let operator = tokens.next().unwrap();
 						let right = get_leaf_node_or_paren_nodes(tokens);
@@ -503,7 +504,7 @@ fn parse_statements(tokens: Vec<Token>) -> Vec<ASTNode> {
 	while let Some(tk) = tokens.peek() {
 		use TokenType as TT;
 		let statement: ASTNodeData = match tk.variant {
-			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma => panic!("Unexpected token"),
+			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate => panic!("Unexpected token"),
 			TT::operator_assignment |
 			TT::operator_equal_to |
 			TT::operator_loose_equal_to |
@@ -525,6 +526,14 @@ fn parse_statements(tokens: Vec<Token>) -> Vec<ASTNode> {
 
 			TT::keyword_cfg | TT::keyword_val | TT::keyword_var => {
 				ASTNodeData::Statement(ASTStatement::Declaration(parse_declaration_statement(&mut tokens)))
+			},
+			TT::keyword_break => {
+				tokens.next();
+				ASTNodeData::Statement(ASTStatement::Break)
+			}
+			TT::keyword_continue => {
+				tokens.next();
+				ASTNodeData::Statement(ASTStatement::Continue)
 			},
 			TT::keyword_loop => {
 				tokens.next();
@@ -588,7 +597,17 @@ fn parse_statements(tokens: Vec<Token>) -> Vec<ASTNode> {
 				let statements = parse_block(&mut tokens);
 				ASTNodeData::Block(ASTBlock::For { declaration, condition, increment, statements })
 			},
-			TT::identifier | TT::link | TT::number | TT::operator_minus | TT::operator_not | TT::string | TT::parenthesis_open =>
+			TT::keyword_while => {
+				tokens.next();
+				require_type(&mut tokens, TokenType::parenthesis_open);
+				let condition = get_expression_allow_line_breaks(&mut tokens);
+				require_type(&mut tokens, TokenType::parenthesis_close);
+				let statements = parse_block(&mut tokens);
+				ASTNodeData::Block(ASTBlock::While { condition, statements })
+			},
+			TT::identifier | TT::link | TT::number | TT::string |
+			TT::operator_minus | TT::operator_not | TT::operator_increment |
+			TT::parenthesis_open =>
 				ASTNodeData::Statement(ASTStatement::Expression(get_expression(&mut tokens))),
 		};
 		statements.push(ASTNode { data: statement, span: 0..0 });
