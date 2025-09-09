@@ -1,13 +1,27 @@
 #![allow(non_camel_case_types)]
 
-use std::ops::Range;
+use std::{fmt::Display, ops::Range};
 use itertools::Itertools;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Token {
 	pub text: String,
 	pub variant: TokenType,
 	pub span: Span,
+}
+
+impl PartialEq for Token {
+	fn eq(&self, other: &Self) -> bool {
+		//ignore span
+		self.text == other.text && self.variant == other.variant
+	}
+}
+impl Eq for Token {}
+
+impl Display for Token {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{}", self.text)
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +72,7 @@ pub enum TokenType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum SubTokenType {
+pub enum SubTokenType {
 	escape,
 	numeric_fragment,
 	whitespace,
@@ -116,6 +130,7 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 			':' => (1, ST::punctuation_colon),
 			';' => (1, ST::punctuation_semicolon),
 			'.' => (1, ST::punctuation_period),
+			',' => (1, ST::punctuation_comma),
 			' ' => (1, ST::whitespace),
 			'\n' => (1, ST::newline),
 			'/' => match chars.peek() {
@@ -271,6 +286,7 @@ pub fn lexer(input:&str) -> Vec<Token> {
 }
 
 pub mod test_utils {
+	#![allow(dead_code)]
 	use super::*;
 
 	pub struct TokenBuilder(usize);
