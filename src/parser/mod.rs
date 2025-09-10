@@ -2,7 +2,7 @@ use std::{fmt::{Debug, Display}, iter::Peekable};
 
 use itertools::Itertools;
 
-use crate::lexer::{Token, TokenType};
+use crate::{common::CError, err, err_, lexer::{Token, TokenType}};
 use crate::common::Span;
 
 pub type AST = ASTBlock;
@@ -265,19 +265,19 @@ fn operator_priority(operator:TokenType) -> u8 {
 	}
 }
 
-fn get_leaf_node_or_paren_nodes(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> ASTExpressionBuilder {
+fn get_leaf_node_or_paren_nodes(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<ASTExpressionBuilder, CError> {
 	use TokenType as TT;
 	tokens.peeking_take_while(|t| t.variant == TT::newline).count(); //skip all newlines
-	let token = tokens.next().expect("Unexpected EOF");
+	let token = tokens.next().ok_or(err_!("Unexpected EOF", None))?;
 	match token.variant {
-		TT::identifier | TT::link | TT::number | TT::string => ASTExpressionBuilder::Leaf(token),
+		TT::identifier | TT::link | TT::number | TT::string => Ok(ASTExpressionBuilder::Leaf(token)),
 		TT::parenthesis_open => {
-			let mut expr = get_expression_inner(tokens, true);
-			require_type(tokens, TokenType::parenthesis_close);
+			let mut expr = get_expression_inner(tokens, true)?;
+			require_type(tokens, TokenType::parenthesis_close)?;
 			expr.set_paren();
-			expr
+			Ok(expr)
 		},
-		t => panic!("Unexpected token: expected a leaf node or the start of an expression, got {t:?}"),
+		t => err!(format!("Unexpected token: expected a leaf node or the start of an expression, got {t:?}"), token.span),
 	}
 }
 
@@ -314,7 +314,7 @@ fn insert_function_call(expr: ASTExpressionBuilder, arguments: Vec<ASTExpression
 }
 
 /// Left-to-right parsing. O(n) time complexity.
-fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow_line_breaks: bool) -> ASTExpressionBuilder {
+fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow_line_breaks: bool) -> Result<ASTExpressionBuilder, CError> {
 	use TokenType as TT;
 	match tokens.peek() {
 		Some(_) => {
@@ -334,7 +334,7 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 								} else if next.variant == TokenType::punctuation_comma {
 									tokens.next(); //consume the comma and continue
 								}
-								arguments.push(get_expression_inner(tokens, true));
+								arguments.push(get_expression_inner(tokens, true)?);
 							}
 							expr = Some(insert_function_call(e, arguments));
 						},
@@ -350,13 +350,13 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 					},
 					TT::operator_minus if expr.is_none() => {
 						let operator = tokens.next().unwrap();
-						let right = get_leaf_node_or_paren_nodes(tokens);
+						let right = get_leaf_node_or_paren_nodes(tokens)?;
 						expr = Some(ASTExpressionBuilder::UnaryOperator { operator, operand: Box::new(right), is_paren: false });
 					},
 					TT::operator_not | TT::operator_increment => {
-						if expr.is_some() { panic!("Expected operator or end of expression, not unary operator") }
 						let operator = tokens.next().unwrap();
-						let right = get_leaf_node_or_paren_nodes(tokens);
+						if expr.is_some() { return err!("Expected operator or end of expression, not unary operator", operator.span) }
+						let right = get_leaf_node_or_paren_nodes(tokens)?;
 						expr = Some(ASTExpressionBuilder::UnaryOperator { operator, operand: Box::new(right), is_paren: false });
 					},
 					TT::operator_assignment |
@@ -375,43 +375,49 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 					TT::operator_modulo |
 					TT::operator_access |
 					TT::operator_minus => {
-						let left = expr.take().expect("Unexpected binary operator with no preceding expression");
+						let left = expr.take().ok_or(err_!("Unexpected binary operator with no preceding expression", next.span.clone()))?;
 						let operator = tokens.next().unwrap();
-						let right = get_leaf_node_or_paren_nodes(tokens);
+						let right = get_leaf_node_or_paren_nodes(tokens)?;
 						expr.replace(insert_binary_operator(left, operator, right));
 					},
 					TT::identifier | TT::link | TT::number | TT::string => {
-						if expr.is_some() { panic!("Expected operator or end of expression, not another expression") }
+						if expr.is_some() { return err!("Expected operator or end of expression, not another expression", next.span.clone()); }
 						expr.replace(ASTExpressionBuilder::Leaf(tokens.next().unwrap()));
 					},
 					TT::newline if allow_line_breaks => { tokens.next(); },
 					_ => { break },
 				}
 			}
-			expr.expect("Invalid expression")
+			match expr {
+				Some(expr) => Ok(expr),
+				None => match tokens.peek() {
+					Some(next) => err!("Invalid expression", next.span.clone()),
+					None => err!("Invalid expression", None),
+				},
+			}
 		},
-		None => panic!("Unexpected EOF"),
+		None => err!("Expected expression, got end of file", None),
 	}
 }
 
-fn get_expression(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> ASTExpression {
-	get_expression_inner(tokens, false).into()
+fn get_expression(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<ASTExpression, CError> {
+	get_expression_inner(tokens, false).map(|x| x.into())
 }
 
-fn get_expression_allow_line_breaks(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> ASTExpression {
-	get_expression_inner(tokens, true).into()
+fn get_expression_allow_line_breaks(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<ASTExpression, CError> {
+	get_expression_inner(tokens, true).map(|x| x.into())
 }
 
-fn get_type_optional(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Option<ASTType> {
+fn get_type_optional(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<Option<ASTType>, CError> {
 	use TokenType as TT;
 	match tokens.peek() {
 		Some(Token { variant: TT::punctuation_colon, .. }) => {
-			tokens.next();
-			let token = tokens.next().expect("expected identifier");
-			if token.variant != TT::identifier { panic!("expected identifier") }
-			Some(ASTType::Literal(token))
+			let colon = tokens.next().unwrap();
+			let token = tokens.next().ok_or(err_!("expected an identifier, got end of input", colon.span))?;
+			if token.variant != TT::identifier { return err!(format!("expected an identifier, got \"{}\"", token.text), token.span); }
+			Ok(Some(ASTType::Literal(token)))
 		},
-		_ => None,
+		_ => Ok(None),
 	}
 }
 
@@ -435,24 +441,27 @@ fn get_tokens_until_eol(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Ve
 	out
 }
 
-fn require_type(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: TokenType) -> Token {
+fn require_type(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: TokenType) -> Result<Token, CError> {
 	match tokens.next() {
-		Some(t) => {
-			if t.variant != typ { panic!("expected {typ:?}") }
-			t
-		}
-		_ => panic!("expected {typ:?}")
+		Some(t) => if t.variant != typ {
+			err!(format!("expected {typ:?}, got \"{}\"", t.text), t.span)
+		} else { Ok(t) },
+		_ => err!(format!("expected {typ:?}, got end of file"), None),
 	}
 }
-fn require_type_peek(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: TokenType){
-	if tokens.peek().expect("expected type").variant != typ { panic!("expected {typ:?}") }
+fn require_type_peek(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: TokenType) -> Result<(), CError> {
+	match tokens.peek() {
+		Some(token) if token.variant == typ => Ok(()),
+		Some(token) => err!(format!("expected {typ:?}, got \"{}\"", token.text), token.span.clone()),
+		None => err!(format!("expected {typ:?}, got end of file"), None),
+	}
 }
 
-pub fn parse(tokens: Vec<Token>) -> AST {
-	ASTBlock::Root { statements: parse_statements(tokens) }
+pub fn parse(tokens: Vec<Token>) -> Result<AST, CError> {
+	Ok(ASTBlock::Root { statements: parse_statements(tokens)? })
 }
 
-fn parse_block(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Vec<ASTNode> {
+fn parse_block(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<Vec<ASTNode>, CError> {
 	use TokenType as TT;
 	match tokens.peek() {
 		Some(Token { variant: TT::brace_open, .. }) => {
@@ -466,46 +475,45 @@ fn parse_block(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Vec<ASTNode
 				}
 				nest_level > 0
 			}).collect();
-			let statements = parse_statements(block);
-			require_type(tokens, TokenType::brace_close);
-			return statements;
+			let statements = parse_statements(block)?;
+			require_type(tokens, TokenType::brace_close)?;
+			Ok(statements)
 		},
 		Some(_) => parse_statements(get_tokens_until_eol(tokens)),
-		None => panic!("expected a block, got EOF"),
+		None => err!("expected a block, got EOF", None),
 	}
 }
 
 /// 
-fn parse_declaration_statement(tokens: &mut Peekable<impl Iterator<Item = Token>>) -> Declaration {
+fn parse_declaration_statement(tokens: &mut Peekable<impl Iterator<Item = Token>>) -> Result<Declaration, CError> {
 	use TokenType as TT;
-	Declaration {
-		binding: match tokens.next().unwrap().variant {
-			TT::keyword_cfg => DeclarationType::Cfg,
-			TT::keyword_val => DeclarationType::Val,
-			TT::keyword_var => DeclarationType::Var,
-			_ => panic!("Expected a variable binding")
-		},
-		identifier: {
-			let token = tokens.next().expect("expected identifier");
-			if token.variant != TT::identifier { panic!("expected identifier") }
-			token
-		},
-		typ: get_type_optional(tokens),
-		value: {
-			let eq = tokens.next().expect("expected =");
-			if eq.variant != TT::operator_assignment { panic!("expected =") }
-			get_expression(tokens)
-		}
-	}
+	let token = tokens.next().ok_or(err_!("Expected a declaration statement, got end of file", None))?;
+	let binding = match token.variant {
+		TT::keyword_cfg => DeclarationType::Cfg,
+		TT::keyword_val => DeclarationType::Val,
+		TT::keyword_var => DeclarationType::Var,
+		_ => return err!(format!("Expected a variable binding, got \"{}\"", token.text), token.span)
+	};
+	let identifier = tokens.next().ok_or(err_!("expected identifier, got end of file", None))?;
+	if identifier.variant != TT::identifier { return err!(format!("expected identifier, got {}", identifier.text), identifier.span) }
+	let eq = tokens.next().ok_or(err_!("expected =, got end of file", None))?;
+	if eq.variant != TT::operator_assignment { return err!("expected =", eq.span); }
+	let value = get_expression(tokens)?;
+	Ok(Declaration {
+		binding,
+		identifier,
+		typ: get_type_optional(tokens)?,
+		value,
+	})
 }
 
-fn parse_statements(tokens: Vec<Token>) -> Vec<ASTNode> {
+fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 	let mut tokens = tokens.into_iter().peekable();
 	let mut statements = vec![];
 	while let Some(tk) = tokens.peek() {
 		use TokenType as TT;
 		let statement: ASTNodeData = match tk.variant {
-			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate => panic!("Unexpected token"),
+			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate => return err!("Unexpected token", tk.span.clone()),
 			TT::operator_assignment |
 			TT::operator_equal_to |
 			TT::operator_loose_equal_to |
@@ -520,13 +528,13 @@ fn parse_statements(tokens: Vec<Token>) -> Vec<ASTNode> {
 			TT::operator_multiply |
 			TT::operator_divide |
 			TT::operator_access |
-			TT::operator_modulo => panic!("Unexpected binary operator with no preceding expression"),
-			TT::punctuation_semicolon => panic!("Duplicate or unnecessary semicolon"),
+			TT::operator_modulo => return err!("Unexpected binary operator with no preceding expression", tk.span.clone()),
+			TT::punctuation_semicolon => return err!("Duplicate or unnecessary semicolon", tk.span.clone()),
 
 			TT::newline => {tokens.next(); continue},
 
 			TT::keyword_cfg | TT::keyword_val | TT::keyword_var => {
-				ASTNodeData::Statement(ASTStatement::Declaration(parse_declaration_statement(&mut tokens)))
+				ASTNodeData::Statement(ASTStatement::Declaration(parse_declaration_statement(&mut tokens)?))
 			},
 			TT::keyword_break => {
 				tokens.next();
@@ -538,82 +546,83 @@ fn parse_statements(tokens: Vec<Token>) -> Vec<ASTNode> {
 			},
 			TT::keyword_loop => {
 				tokens.next();
-				ASTNodeData::Block(ASTBlock::Loop { statements: parse_block(&mut tokens) })
+				ASTNodeData::Block(ASTBlock::Loop { statements: parse_block(&mut tokens)? })
 			},
 			TT::keyword_return => {
 				tokens.next();
 				ASTNodeData::Statement(ASTStatement::Return(match tokens.peek() {
 					None | Some(Token { variant: TokenType::punctuation_semicolon | TokenType::newline, .. }) => None,
-					_ => Some(get_expression(&mut tokens)),
+					_ => Some(get_expression(&mut tokens)?),
 				}))
 			},
 			TT::keyword_if => {
 				tokens.next();
-				require_type(&mut tokens, TokenType::parenthesis_open);
-				let condition = get_expression_allow_line_breaks(&mut tokens);
-				require_type(&mut tokens, TokenType::parenthesis_close);
-				let statements = parse_block(&mut tokens);
+				require_type(&mut tokens, TokenType::parenthesis_open)?;
+				let condition = get_expression_allow_line_breaks(&mut tokens)?;
+				require_type(&mut tokens, TokenType::parenthesis_close)?;
+				let statements = parse_block(&mut tokens)?;
 				ASTNodeData::Block(ASTBlock::If { condition, statements })
 			},
 			TT::keyword_fn => {
 				tokens.next();
-				let name = require_type(&mut tokens, TokenType::identifier);
+				let name = require_type(&mut tokens, TokenType::identifier)?;
 				ASTNodeData::Block(ASTBlock::Function {
 					name,
 					arguments: {
 						let mut arguments = vec![];
-						require_type(&mut tokens, TokenType::parenthesis_open);
+						require_type(&mut tokens, TokenType::parenthesis_open)?;
 						while let Some(token) = tokens.next() {
 							match token.variant {
 								TT::identifier => {
-									let typ = get_type_optional(&mut tokens).expect("Please specify the type");
+									let span = token.span.clone();
+									let typ = get_type_optional(&mut tokens)?.ok_or(err_!("Please specify the type for this token", span))?;
 									arguments.push((token, typ));
 									if tokens.peek().is_some_and(|t| t.variant == TokenType::punctuation_comma) {
 										tokens.next();
 									}
 								},
 								TT::parenthesis_close => break,
-								_ => panic!("Expected an argument, or end of arguments"),
+								_ => return err!("Unexpected token: Expected an argument, or end of arguments", token.span),
 							}
 						}
 						arguments
 					},
-					return_type: get_type_optional(&mut tokens),
-					statements: parse_block(&mut tokens),
+					return_type: get_type_optional(&mut tokens)?,
+					statements: parse_block(&mut tokens)?,
 				})
 			},
 			TT::keyword_for => {
 				tokens.next();
-				require_type(&mut tokens, TokenType::parenthesis_open);
-				let declaration = parse_declaration_statement(&mut tokens);
-				require_type(&mut tokens, TokenType::punctuation_semicolon);
-				let condition = get_expression(&mut tokens);
-				require_type(&mut tokens, TokenType::punctuation_semicolon);
+				require_type(&mut tokens, TokenType::parenthesis_open)?;
+				let declaration = parse_declaration_statement(&mut tokens)?;
+				require_type(&mut tokens, TokenType::punctuation_semicolon)?;
+				let condition = get_expression(&mut tokens)?;
+				require_type(&mut tokens, TokenType::punctuation_semicolon)?;
 				let increment = match tokens.peek() {
 					Some(Token { variant: TokenType::parenthesis_close, .. }) => None,
-					Some(_) => Some(ASTStatement::Expression(get_expression_allow_line_breaks(&mut tokens))),
-					None => panic!("Unexpected EOF"),
+					Some(_) => Some(ASTStatement::Expression(get_expression_allow_line_breaks(&mut tokens)?)),
+					None => return err!("Unexpected end of file", None),
 				};
-				require_type(&mut tokens, TokenType::parenthesis_close);
-				let statements = parse_block(&mut tokens);
+				require_type(&mut tokens, TokenType::parenthesis_close)?;
+				let statements = parse_block(&mut tokens)?;
 				ASTNodeData::Block(ASTBlock::For { declaration, condition, increment, statements })
 			},
 			TT::keyword_while => {
 				tokens.next();
-				require_type(&mut tokens, TokenType::parenthesis_open);
-				let condition = get_expression_allow_line_breaks(&mut tokens);
-				require_type(&mut tokens, TokenType::parenthesis_close);
-				let statements = parse_block(&mut tokens);
+				require_type(&mut tokens, TokenType::parenthesis_open)?;
+				let condition = get_expression_allow_line_breaks(&mut tokens)?;
+				require_type(&mut tokens, TokenType::parenthesis_close)?;
+				let statements = parse_block(&mut tokens)?;
 				ASTNodeData::Block(ASTBlock::While { condition, statements })
 			},
 			TT::identifier | TT::link | TT::number | TT::string |
 			TT::operator_minus | TT::operator_not | TT::operator_increment |
 			TT::parenthesis_open =>
-				ASTNodeData::Statement(ASTStatement::Expression(get_expression(&mut tokens))),
+				ASTNodeData::Statement(ASTStatement::Expression(get_expression(&mut tokens)?)),
 		};
 		statements.push(ASTNode { data: statement, span: 0..0 });
 	}
-	statements
+	Ok(statements)
 }
 
 
@@ -648,7 +657,7 @@ mod tests {
 				b.bclose(),
 				b.newline_last(),
 			]),
-			ASTBlock::Root { statements: vec![
+			Ok(ASTBlock::Root { statements: vec![
 				ASTNode {
 					data: ASTNodeData::Statement(
 						ASTStatement::Expression(ASTExpression::FunctionCall {
@@ -714,7 +723,7 @@ mod tests {
 					}),
 					span: 0..0
 				}
-			]}
+			]})
 		)
 	}
 }
