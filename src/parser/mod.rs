@@ -2,7 +2,8 @@ use std::{fmt::{Debug, Display}, iter::Peekable};
 
 use itertools::Itertools;
 
-use crate::lexer::{Span, Token, TokenType};
+use crate::lexer::{Token, TokenType};
+use crate::common::Span;
 
 pub type AST = ASTBlock;
 #[derive(PartialEq, Eq, Debug)]

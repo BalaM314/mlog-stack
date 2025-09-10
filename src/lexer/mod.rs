@@ -1,7 +1,9 @@
 #![allow(non_camel_case_types)]
 
-use std::{fmt::Display, ops::Range};
+use std::fmt::Display;
 use itertools::Itertools;
+use crate::common::{CError, Span};
+use crate::err;
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -122,9 +124,7 @@ pub enum SubTokenType {
 	punctuation_dollar,
 }
 
-pub type Span = Range<usize>;
-
-fn get_sub_tokens(input:&str) -> Vec<SubToken> {
+fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 	let mut out: Vec<SubToken> = vec![];
 	let mut chars = input.chars().enumerate().peekable();
 	while let Some((i, char)) = chars.next() {
@@ -204,21 +204,21 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 					chars.next();
 					(2, ST::operator_loose_equal_to)
 				},
-				_ => panic!("Invalid char ~")
+				_ => return err!("Unexpected character ~", i..i+1),
 			},
 			'&' => match chars.peek() {
 				Some((_, '&')) => {
 					chars.next();
 					(2, ST::operator_and)
 				},
-				_ => panic!("bitwise and is unimplemented"),
+				_ => return err!("bitwise and is unimplemented", i..i+1),
 			},
 			'|' => match chars.peek() {
 				Some((_, '|')) => {
 					chars.next();
 					(2, ST::operator_or)
 				},
-				_ => panic!("bitwise or is unimplemented"),
+				_ => return err!("bitwise or is unimplemented", i..i+1),
 			},
 			'e' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_e),
 			'x' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_x),
@@ -227,17 +227,17 @@ fn get_sub_tokens(input:&str) -> Vec<SubToken> {
 			'$' => (1, ST::punctuation_dollar),
 			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| matches!(c, 'a'..='z' | 'A'..='Z' | '_' | '@' | '$')).count() + 1, ST::word),
 			'0'..='9' => (chars.peeking_take_while(|(_, c)| c.is_numeric()).count() + 1, ST::numeric_fragment),
-			_ => panic!("Invalid char {char}")
+			_ => return err!(format!("Invalid char {char}"), i..i+1),
 		};
 		let span = i..i+len;
 		out.push(SubToken { text: input[span.clone()].to_string(), variant, span });
 	}
-	out
+	Ok(out)
 }
 
-pub fn lexer(input:&str) -> Vec<Token> {
+pub fn lexer(input:&str) -> Result<Vec<Token>, CError> {
 	let mut out = vec![];
-	let mut sub_tokens = get_sub_tokens(input).into_iter().peekable();
+	let mut sub_tokens = get_sub_tokens(input)?.into_iter().peekable();
 	'process_loop:
 	while let Some(st) = sub_tokens.next() {
 		use SubTokenType as ST;
@@ -268,7 +268,7 @@ pub fn lexer(input:&str) -> Vec<Token> {
 			ST::operator_access => TokenType::operator_access,
 			ST::punctuation_comma => TokenType::punctuation_comma,
 			ST::newline => TokenType::newline,
-			ST::escape => panic!("Unexpected escape character"),
+			ST::escape => return err!("Unexpected escape character", st.span),
 			ST::punctuation_dollar => match sub_tokens.peek() {
 				Some(SubToken { variant: ST::word, span: span2, .. }) => {
 					let span = st.span.start..span2.end;
@@ -288,7 +288,7 @@ pub fn lexer(input:&str) -> Vec<Token> {
 							sub_tokens.next();
 							continue;
 						},
-						_ => panic!("Invalid numeric literal: Expected more digits after the decimal point")
+						_ => return err!("Invalid numeric literal: Expected more digits after the decimal point", st.span)
 					}
 				},
 				Some(SubToken { variant: ST::numeric_e | ST::numeric_b | ST::numeric_o | ST::numeric_x, .. }) => {
@@ -300,12 +300,13 @@ pub fn lexer(input:&str) -> Vec<Token> {
 							sub_tokens.next();
 							continue;
 						},
-						x => panic!("Invalid numeric literal: Expected more digits after the character, got {x:?}")
+						Some(x) => return err!(format!("Invalid numeric literal: Expected more digits after the character, got {x:?}"), x.span.clone()),
+						None => return err!(format!("Invalid numeric literal: Expected more digits after the character, got end of file"), st.span)
 					}
 				},
 				_ => TokenType::number
 			},
-			ST::numeric_e | ST::numeric_b | ST::numeric_o | ST::numeric_x => panic!("Invalid numeric literal: numeric literals can only contain one non-numeric character, like b e o x"),
+			ST::numeric_e | ST::numeric_b | ST::numeric_o | ST::numeric_x => return err!("Invalid numeric literal: numeric literals can only contain one non-numeric character, like b e o x", st.span),
 			ST::whitespace => continue,
 			ST::word => match &st.text[..] {
 				"if" => TokenType::keyword_if,
@@ -327,10 +328,15 @@ pub fn lexer(input:&str) -> Vec<Token> {
 			},
 			ST::comment_start => {
 				sub_tokens.peeking_take_while(|st| st.variant != ST::comment_end).count();
-				sub_tokens.next().expect("Unterminated multiline comment");
-				continue;
+				match sub_tokens.next() {
+					None => {
+						let whole_comment = st.span.start..input.len();
+						return err!("Unterminated multiline comment", st.span, whole_comment);
+					},
+					_ => continue,
+				}
 			},
-			ST::comment_end => panic!("Unexpected token, no multiline comment to end"),
+			ST::comment_end => return err!("Unexpected token, no multiline comment to end", st.span),
 			ST::quote_double | ST::quote_single | ST::quote_backtick => {
 				while let Some(st2) = sub_tokens.next() {
 					if st2.variant == ST::escape { 
@@ -354,11 +360,12 @@ pub fn lexer(input:&str) -> Vec<Token> {
 						continue 'process_loop;
 					}
 				}
-				panic!("Unterminated string literal");
+				let whole_string = st.span.start..input.len();
+				return err!("Unterminated string literal", st.span, whole_string);
 			},
 		}});
 	}
-	out
+	Ok(out)
 }
 
 pub mod test_utils {
@@ -430,7 +437,7 @@ mod tests {
 	fn get_sub_tokens_test(){
 		assert_eq!(
 			get_sub_tokens("1 + 2 - 3"),
-			vec![
+			Ok(vec![
 				SubToken { text: String::from("1"), variant: ST::numeric_fragment, span: 0..1 },
 				SubToken { text: String::from(" "), variant: ST::whitespace, span: 1..2 },
 				SubToken { text: String::from("+"), variant: ST::operator_add, span: 2..3 },
@@ -440,11 +447,11 @@ mod tests {
 				SubToken { text: String::from("-"), variant: ST::operator_minus, span: 6..7 },
 				SubToken { text: String::from(" "), variant: ST::whitespace, span: 7..8 },
 				SubToken { text: String::from("3"), variant: ST::numeric_fragment, span: 8..9 },
-			]
+			])
 		);
 		assert_eq!(
 			get_sub_tokens(r#"print("Hello\" world.");"#),
-			vec![
+			Ok(vec![
 				SubToken { text: String::from("print"), variant: ST::word, span: 0..5 },
 				SubToken { text: String::from("("), variant: ST::parenthesis_open, span: 5..6 },
 				SubToken { text: String::from("\""), variant: ST::quote_double, span: 6..7 },
@@ -457,7 +464,7 @@ mod tests {
 				SubToken { text: String::from("\""), variant: ST::quote_double, span: 21..22 },
 				SubToken { text: String::from(")"), variant: ST::parenthesis_close, span: 22..23 },
 				SubToken { text: String::from(";"), variant: ST::punctuation_semicolon, span: 23..24 },
-			]
+			])
 		);
 	}
 
@@ -465,27 +472,27 @@ mod tests {
 	fn lexer_test(){
 		assert_eq!(
 			lexer("1 + 2 - 3.45"),
-			vec![
+			Ok(vec![
 				Token { text: String::from("1"), variant: TT::number, span: 0..1 },
 				Token { text: String::from("+"), variant: TT::operator_add, span: 2..3 },
 				Token { text: String::from("2"), variant: TT::number, span: 4..5 },
 				Token { text: String::from("-"), variant: TT::operator_minus, span: 6..7 },
 				Token { text: String::from("3.45"), variant: TT::number, span: 8..12 },
-			]
+			])
 		);
 		assert_eq!(
 			lexer(r#"print("Hello\" world.");"#),
-			vec![
+			Ok(vec![
 				Token { text: String::from("print"), variant: TT::identifier, span: 0..5 },
 				Token { text: String::from("("), variant: TT::parenthesis_open, span: 5..6 },
 				Token { text: String::from(r#""Hello\" world.""#), variant: TT::string, span: 6..22 },
 				Token { text: String::from(")"), variant: TT::parenthesis_close, span: 22..23 },
 				Token { text: String::from(";"), variant: TT::punctuation_semicolon, span: 23..24 },
-			]
+			])
 		);
 		assert_eq!(
 			lexer("1.2 + 3 // this 'is a comment+\n4 - 5"),
-			vec![
+			Ok(vec![
 				Token { text: String::from("1.2"), variant: TT::number, span: 0..3 },
 				Token { text: String::from("+"), variant: TT::operator_add, span: 4..5 },
 				Token { text: String::from("3"), variant: TT::number, span: 6..7 },
@@ -493,7 +500,7 @@ mod tests {
 				Token { text: String::from("4"), variant: TT::number, span: 31..32 },
 				Token { text: String::from("-"), variant: TT::operator_minus, span: 33..34 },
 				Token { text: String::from("5"), variant: TT::number, span: 35..36 },
-			]
+			])
 		);
 	}
 }

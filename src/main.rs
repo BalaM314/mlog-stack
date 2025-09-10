@@ -1,19 +1,22 @@
-use std::{env::args, fs};
+use std::{env::args, error::Error, fs};
 
 
 mod lexer;
 mod parser;
+mod common;
 
 fn main() {
-	if let Some(filename) = args().nth(1) {
-		match fs::read_to_string(filename) {
-			Ok(data) => {
-				let output = parser::parse(lexer::lexer(&data));
-				println!("{output}");
-			},
-			Err(err) => eprintln!("{err}"),
-		}
-	} else {
-		eprintln!("please specify a file to read");
+	match run() {
+		Err(err) => eprintln!("{err}"),
+		_ => {},
 	}
 }
+
+fn run() -> Result<(), Box<dyn Error>> {
+	let filename = args().nth(1).ok_or("please specify a file to read")?;
+	let data = fs::read_to_string(filename)?;
+	let output = parser::parse(lexer::lexer(&data)?);
+	println!("{output}");
+	Ok(())
+}
+
