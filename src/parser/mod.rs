@@ -238,29 +238,68 @@ impl Display for ASTNodeData {
 	}
 }
 
+enum Associative {
+	Right, Left, Either,
+}
+
+fn operator_associative(operator:TokenType) -> Associative {
+	use TokenType as TT;
+	match operator {
+		TT::operator_exponentiate |
+		TT::operator_assignment |
+		TT::operator_assignment_add |
+		TT::operator_assignment_subtract |
+		TT::operator_assignment_multiply |
+		TT::operator_assignment_divide =>
+			Associative::Right,
+		TT::operator_access | TT::operator_minus |
+		TT::operator_divide | TT::operator_integer_divide |
+		TT::operator_modulo | TT::operator_euclidian_modulo |
+		TT::operator_shift_left | TT::operator_shift_right | TT::operator_shift_right_unsigned =>
+			Associative::Left,
+		TT::operator_add | TT::operator_multiply |
+		TT::operator_bitwise_and | TT::operator_bitwise_or | TT::operator_bitwise_xor =>
+			Associative::Either,
+		_ => Associative::Left,
+	}
+}
 
 ///operator must be an operator
 fn operator_priority(operator:TokenType) -> u8 {
 	use TokenType as TT;
 	match operator {
-		TT::operator_access => 7,
-		TT::operator_increment => 6,
-		TT::operator_not => 6,
-		TT::operator_multiply => 5,
-		TT::operator_divide => 5,
-		TT::operator_modulo => 5,
-		TT::operator_add => 4,
-		TT::operator_minus => 4,
-		TT::operator_equal_to => 3,
-		TT::operator_loose_equal_to => 3,
+		TT::operator_access => 9,
+		TT::operator_increment |
+		TT::operator_not |
+		TT::operator_bitwise_flip => 8,
+		TT::operator_exponentiate => 8,
+		TT::operator_multiply |
+		TT::operator_divide |
+		TT::operator_integer_divide |
+		TT::operator_modulo |
+		TT::operator_euclidian_modulo => 7,
+		TT::operator_add |
+		TT::operator_minus => 6,
+		TT::operator_shift_left |
+		TT::operator_shift_right |
+		TT::operator_shift_right_unsigned => 5,
+		TT::operator_greater_than |
+		TT::operator_less_than |
+		TT::operator_greater_than_eq |
+		TT::operator_less_than_eq => 4,
+		TT::operator_equal_to |
+		TT::operator_loose_equal_to |
 		TT::operator_not_equal_to => 3,
-		TT::operator_greater_than => 3,
-		TT::operator_less_than => 3,
-		TT::operator_greater_than_eq => 3,
-		TT::operator_less_than_eq => 3,
-		TT::operator_and => 2,
-		TT::operator_or => 1,
-		TT::operator_assignment => 0,
+		TT::operator_logical_and |
+		TT::operator_bitwise_and => 2,
+		TT::operator_bitwise_xor |
+		TT::operator_logical_or |
+		TT::operator_bitwise_or => 1,
+		TT::operator_assignment |
+		TT::operator_assignment_add |
+		TT::operator_assignment_subtract |
+		TT::operator_assignment_multiply |
+		TT::operator_assignment_divide => 0,
 		_ => unreachable!(),
 	}
 }
@@ -291,7 +330,10 @@ fn insert_binary_operator(expr: ASTExpressionBuilder, operator: Token, right: AS
 		ASTExpressionBuilder::UnaryOperator { operator: unary, operand, .. } =>
 			ASTExpressionBuilder::UnaryOperator { operator: unary, operand: Box::new(insert_binary_operator(*operand, operator, right)), is_paren: false },
 		ASTExpressionBuilder::BinaryOperator { operator: ref existing, is_paren, .. }
-		if is_paren || operator_priority(existing.variant.clone()) >= operator_priority(operator.variant.clone()) =>
+		if is_paren || match operator_associative(existing.variant.clone()) { //is it correct to use existing here, or should it be the new operator?
+			Associative::Left | Associative::Either => u8::ge, //the existing operator has higher priority than the new one
+			Associative::Right => u8::gt //the existing operator has lower priority than the new one
+		}(&operator_priority(existing.variant.clone()), &operator_priority(operator.variant.clone())) =>
 			ASTExpressionBuilder::BinaryOperator { left: Box::new(expr), operator, right: Box::new(right), is_paren: false },
 		ASTExpressionBuilder::BinaryOperator { left, operator: existing, right: left_right, .. } =>
 			ASTExpressionBuilder::BinaryOperator { left: left, operator: existing, right: Box::new(insert_binary_operator(*left_right, operator, right)), is_paren: false },
@@ -353,28 +395,41 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 						let right = get_leaf_node_or_paren_nodes(tokens)?;
 						expr = Some(ASTExpressionBuilder::UnaryOperator { operator, operand: Box::new(right), is_paren: false });
 					},
-					TT::operator_not | TT::operator_increment => {
+					TT::operator_not | TT::operator_increment | TT::operator_bitwise_flip => {
 						let operator = tokens.next().unwrap();
 						if expr.is_some() { return err!("Expected operator or end of expression, not unary operator", operator.span) }
 						let right = get_leaf_node_or_paren_nodes(tokens)?;
 						expr = Some(ASTExpressionBuilder::UnaryOperator { operator, operand: Box::new(right), is_paren: false });
 					},
-					TT::operator_assignment |
-					TT::operator_equal_to |
-					TT::operator_loose_equal_to |
-					TT::operator_not_equal_to |
+					TT::operator_access |
+					TT::operator_exponentiate |
+					TT::operator_multiply |
+					TT::operator_divide |
+					TT::operator_integer_divide |
+					TT::operator_modulo |
+					TT::operator_euclidian_modulo |
+					TT::operator_add |
+					TT::operator_minus |
+					TT::operator_shift_left |
+					TT::operator_shift_right |
+					TT::operator_shift_right_unsigned |
 					TT::operator_greater_than |
 					TT::operator_less_than |
 					TT::operator_greater_than_eq |
 					TT::operator_less_than_eq |
-					TT::operator_and |
-					TT::operator_or |
-					TT::operator_add |
-					TT::operator_multiply |
-					TT::operator_divide |
-					TT::operator_modulo |
-					TT::operator_access |
-					TT::operator_minus => {
+					TT::operator_equal_to |
+					TT::operator_loose_equal_to |
+					TT::operator_not_equal_to |
+					TT::operator_logical_and |
+					TT::operator_bitwise_and |
+					TT::operator_bitwise_xor |
+					TT::operator_logical_or |
+					TT::operator_bitwise_or |
+					TT::operator_assignment |
+					TT::operator_assignment_add |
+					TT::operator_assignment_subtract |
+					TT::operator_assignment_multiply |
+					TT::operator_assignment_divide => {
 						let left = expr.take().ok_or(err_!("Unexpected binary operator with no preceding expression", next.span.clone()))?;
 						let operator = tokens.next().unwrap();
 						let right = get_leaf_node_or_paren_nodes(tokens)?;
@@ -513,22 +568,36 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 	while let Some(tk) = tokens.peek() {
 		use TokenType as TT;
 		let statement: ASTNodeData = match tk.variant {
-			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate => return err!("Unexpected token", tk.span.clone()),
-			TT::operator_assignment |
-			TT::operator_equal_to |
-			TT::operator_loose_equal_to |
-			TT::operator_not_equal_to |
+			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate =>
+				return err!("Unexpected token", tk.span.clone()),
+			TT::operator_access |
+			TT::operator_exponentiate |
+			TT::operator_multiply |
+			TT::operator_divide |
+			TT::operator_integer_divide |
+			TT::operator_modulo |
+			TT::operator_euclidian_modulo |
+			TT::operator_add |
+			TT::operator_shift_left |
+			TT::operator_shift_right |
+			TT::operator_shift_right_unsigned |
 			TT::operator_greater_than |
 			TT::operator_less_than |
 			TT::operator_greater_than_eq |
 			TT::operator_less_than_eq |
-			TT::operator_and |
-			TT::operator_or |
-			TT::operator_add |
-			TT::operator_multiply |
-			TT::operator_divide |
-			TT::operator_access |
-			TT::operator_modulo => return err!("Unexpected binary operator with no preceding expression", tk.span.clone()),
+			TT::operator_equal_to |
+			TT::operator_loose_equal_to |
+			TT::operator_not_equal_to |
+			TT::operator_logical_and |
+			TT::operator_bitwise_and |
+			TT::operator_bitwise_xor |
+			TT::operator_logical_or |
+			TT::operator_bitwise_or |
+			TT::operator_assignment |
+			TT::operator_assignment_add |
+			TT::operator_assignment_subtract |
+			TT::operator_assignment_multiply |
+			TT::operator_assignment_divide => return err!("Unexpected binary operator with no preceding expression", tk.span.clone()),
 			TT::punctuation_semicolon => return err!("Duplicate or unnecessary semicolon", tk.span.clone()),
 
 			TT::newline => {tokens.next(); continue},
@@ -616,7 +685,7 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 				ASTNodeData::Block(ASTBlock::While { condition, statements })
 			},
 			TT::identifier | TT::link | TT::number | TT::string |
-			TT::operator_minus | TT::operator_not | TT::operator_increment |
+			TT::operator_minus | TT::operator_not | TT::operator_increment | TT::operator_bitwise_flip |
 			TT::parenthesis_open =>
 				ASTNodeData::Statement(ASTStatement::Expression(get_expression(&mut tokens)?)),
 		};

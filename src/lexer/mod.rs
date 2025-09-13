@@ -51,24 +51,48 @@ pub enum TokenType {
 	keyword_var,
 	keyword_val,
 	keyword_cfg,
-	operator_assignment,
-	operator_not,
-	operator_equal_to,
-	operator_loose_equal_to,
-	operator_not_equal_to,
-	operator_greater_than,
-	operator_less_than,
-	operator_greater_than_eq,
-	operator_less_than_eq,
-	operator_and,
-	operator_or,
-	operator_add,
+	
+	//special operators: these have no mlog equivalent
+	operator_access,
 	operator_increment,
+	operator_assignment,
+	operator_assignment_add,
+	operator_assignment_subtract,
+	operator_assignment_multiply,
+	operator_assignment_divide,
+	//other operators are natively supported by mlog
+
+	//Basic arithmetic
+	operator_add,
 	operator_minus,
 	operator_multiply,
 	operator_divide,
+	operator_integer_divide,
 	operator_modulo,
-	operator_access,
+	operator_euclidian_modulo,
+	operator_exponentiate,
+
+	//Logical operations
+	operator_loose_equal_to,
+	operator_not_equal_to,
+	operator_logical_and,
+	operator_less_than,
+	operator_less_than_eq,
+	operator_greater_than,
+	operator_greater_than_eq,
+	operator_equal_to,
+	operator_logical_or, //this operator has a direct mlog equivalent
+	operator_not, //this operator has a direct mlog equivalent
+
+	//Bitwise operations
+	operator_shift_left,
+	operator_shift_right,
+	operator_shift_right_unsigned,
+	operator_bitwise_or,
+	operator_bitwise_and,
+	operator_bitwise_xor,
+	operator_bitwise_flip,
+
 	parenthesis_open,
 	parenthesis_close,
 	brace_open,
@@ -93,24 +117,48 @@ pub enum SubTokenType {
 	comment_singleline,
 	comment_start,
 	comment_end,
-	operator_assignment,
-	operator_not,
-	operator_equal_to,
-	operator_loose_equal_to,
-	operator_not_equal_to,
-	operator_greater_than,
-	operator_less_than,
-	operator_greater_than_eq,
-	operator_less_than_eq,
-	operator_and,
-	operator_or,
-	operator_add,
+
+	//special operators: these have no mlog equivalent
+	operator_access,
 	operator_increment,
-	operator_minus,
+	operator_assignment,
+	operator_assignment_add,
+	operator_assignment_subtract,
+	operator_assignment_multiply,
+	operator_assignment_divide,
+	//other operators are natively supported by mlog
+
+	//Basic arithmetic
+	operator_add,
+	operator_minus, //unary
 	operator_multiply,
 	operator_divide,
+	operator_integer_divide,
 	operator_modulo,
-	operator_access,
+	operator_euclidian_modulo,
+	operator_exponentiate,
+
+	//Logical operations
+	operator_loose_equal_to,
+	operator_not_equal_to,
+	operator_logical_and,
+	operator_less_than,
+	operator_less_than_eq,
+	operator_greater_than,
+	operator_greater_than_eq,
+	operator_equal_to,
+	operator_logical_or, //this operator has a direct mlog equivalent
+	operator_not, //this operator has a direct mlog equivalent //unary
+
+	//Bitwise operations
+	operator_shift_left,
+	operator_shift_right,
+	operator_shift_right_unsigned,
+	operator_bitwise_or,
+	operator_bitwise_and,
+	operator_bitwise_xor,
+	operator_bitwise_flip, //unary
+
 	parenthesis_open,
 	parenthesis_close,
 	brace_open,
@@ -136,17 +184,41 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 					chars.next();
 					(2, ST::operator_increment)
 				}
+				Some((_, '=')) => {
+					chars.next();
+					(2, ST::operator_assignment_add)
+				}
 				_ => (1, ST::operator_add),
 			},
-			'-' => (1, ST::operator_minus),
+			'-' => match chars.peek() {
+				Some((_, '=')) => {
+					chars.next();
+					(2, ST::operator_assignment_subtract)
+				}
+				_ => (1, ST::operator_minus),
+			}
 			'*' => match chars.peek() {
 				Some((_, '/')) => {
 					chars.next();
 					(2, ST::comment_end)
 				}
+				Some((_, '*')) => {
+					chars.next();
+					(2, ST::operator_exponentiate)
+				}
+				Some((_, '=')) => {
+					chars.next();
+					(2, ST::operator_assignment_multiply)
+				}
 				_ => (1, ST::operator_multiply)
 			},
-			'%' => (1, ST::operator_modulo),
+			'%' => match chars.peek() {
+				Some((_, '%')) => {
+					chars.next();
+					(2, ST::operator_euclidian_modulo)
+				}
+				_ => (1, ST::operator_modulo)
+			},
 			'(' => (1, ST::parenthesis_open),
 			')' => (1, ST::parenthesis_close),
 			'{' => (1, ST::brace_open),
@@ -169,6 +241,14 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 					chars.next();
 					(2, ST::comment_start)
 				},
+				Some((_, '.')) => {
+					chars.next();
+					(2, ST::operator_integer_divide)
+				},
+				Some((_, '=')) => {
+					chars.next();
+					(2, ST::operator_assignment_divide)
+				}
 				_ => (1, ST::operator_divide),
 			},
 			'=' => match chars.peek() {
@@ -183,12 +263,26 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 					chars.next();
 					(2, ST::operator_greater_than_eq)
 				},
+				Some((_, '>')) => {
+					chars.next();
+					match chars.peek() {
+						Some((_, '>')) => {
+							chars.next();
+							(3, ST::operator_shift_right_unsigned)
+						}
+						_ => (2, ST::operator_shift_right)
+					}
+				},
 				_ => (1, ST::operator_greater_than),
 			},
 			'<' => match chars.peek() {
 				Some((_, '=')) => {
 					chars.next();
 					(2, ST::operator_less_than_eq)
+				},
+				Some((_, '<')) => {
+					chars.next();
+					(2, ST::operator_shift_left)
 				},
 				_ => (1, ST::operator_less_than),
 			},
@@ -204,22 +298,23 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 					chars.next();
 					(2, ST::operator_loose_equal_to)
 				},
-				_ => return err!("Unexpected character ~", i..i+1),
+				_ => (1, ST::operator_bitwise_flip),
 			},
 			'&' => match chars.peek() {
 				Some((_, '&')) => {
 					chars.next();
-					(2, ST::operator_and)
+					(2, ST::operator_logical_and)
 				},
-				_ => return err!("bitwise and is unimplemented", i..i+1),
+				_ => (1, ST::operator_bitwise_and),
 			},
 			'|' => match chars.peek() {
 				Some((_, '|')) => {
 					chars.next();
-					(2, ST::operator_or)
+					(2, ST::operator_logical_or)
 				},
-				_ => return err!("bitwise or is unimplemented", i..i+1),
+				_ => (1, ST::operator_bitwise_or),
 			},
+			'^' => (1, ST::operator_bitwise_xor),
 			'e' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_e),
 			'x' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_x),
 			'b' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_b),
@@ -242,30 +337,46 @@ pub fn lexer(input:&str) -> Result<Vec<Token>, CError> {
 	while let Some(st) = sub_tokens.next() {
 		use SubTokenType as ST;
 		out.push(Token { text: st.text.clone(), span: st.span.clone(), variant: match st.variant {
+			
 			ST::operator_assignment => TokenType::operator_assignment,
-			ST::operator_not => TokenType::operator_not,
-			ST::operator_equal_to => TokenType::operator_equal_to,
-			ST::operator_loose_equal_to => TokenType::operator_loose_equal_to,
-			ST::operator_not_equal_to => TokenType::operator_not_equal_to,
-			ST::operator_greater_than => TokenType::operator_greater_than,
-			ST::operator_less_than => TokenType::operator_less_than,
-			ST::operator_greater_than_eq => TokenType::operator_greater_than_eq,
-			ST::operator_less_than_eq => TokenType::operator_less_than_eq,
-			ST::operator_and => TokenType::operator_and,
-			ST::operator_or => TokenType::operator_or,
-			ST::operator_add => TokenType::operator_add,
+			ST::operator_assignment_add => TokenType::operator_assignment_add,
+			ST::operator_assignment_subtract => TokenType::operator_assignment_subtract,
+			ST::operator_assignment_multiply => TokenType::operator_assignment_multiply,
+			ST::operator_assignment_divide => TokenType::operator_assignment_divide,
+			ST::operator_access => TokenType::operator_access,
 			ST::operator_increment => TokenType::operator_increment,
+			ST::operator_add => TokenType::operator_add,
 			ST::operator_minus => TokenType::operator_minus,
 			ST::operator_multiply => TokenType::operator_multiply,
 			ST::operator_divide => TokenType::operator_divide,
+			ST::operator_integer_divide => TokenType::operator_integer_divide,
 			ST::operator_modulo => TokenType::operator_modulo,
+			ST::operator_euclidian_modulo => TokenType::operator_euclidian_modulo,
+			ST::operator_exponentiate => TokenType::operator_exponentiate,
+			ST::operator_loose_equal_to => TokenType::operator_loose_equal_to,
+			ST::operator_not_equal_to => TokenType::operator_not_equal_to,
+			ST::operator_logical_and => TokenType::operator_logical_and,
+			ST::operator_less_than => TokenType::operator_less_than,
+			ST::operator_less_than_eq => TokenType::operator_less_than_eq,
+			ST::operator_greater_than => TokenType::operator_greater_than,
+			ST::operator_greater_than_eq => TokenType::operator_greater_than_eq,
+			ST::operator_equal_to => TokenType::operator_equal_to,
+			ST::operator_logical_or => TokenType::operator_logical_or,
+			ST::operator_not => TokenType::operator_not,
+			ST::operator_shift_left => TokenType::operator_shift_left,
+			ST::operator_shift_right => TokenType::operator_shift_right,
+			ST::operator_shift_right_unsigned => TokenType::operator_shift_right_unsigned,
+			ST::operator_bitwise_or => TokenType::operator_bitwise_or,
+			ST::operator_bitwise_and => TokenType::operator_bitwise_and,
+			ST::operator_bitwise_xor => TokenType::operator_bitwise_xor,
+			ST::operator_bitwise_flip => TokenType::operator_bitwise_flip,
+
 			ST::parenthesis_open => TokenType::parenthesis_open,
 			ST::parenthesis_close => TokenType::parenthesis_close,
 			ST::brace_open => TokenType::brace_open,
 			ST::brace_close => TokenType::brace_close,
 			ST::punctuation_colon => TokenType::punctuation_colon,
 			ST::punctuation_semicolon => TokenType::punctuation_semicolon,
-			ST::operator_access => TokenType::operator_access,
 			ST::punctuation_comma => TokenType::punctuation_comma,
 			ST::newline => TokenType::newline,
 			ST::escape => return err!("Unexpected escape character", st.span),

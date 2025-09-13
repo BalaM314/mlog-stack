@@ -1,0 +1,9 @@
+
+print(1 + 2 * 3, 1 * 2 + 3)
+print(1 - 2 - 3, 1 / 2 / 3)
+print(1 - 2 - 3, 1 / 2 / 3)
+print(a = b + c < d - e * f && d <= e || f > g && h >= i || j == k && l != m)
+var x = 15
+var y = 2 - (x += 4 || (5 << 1 + 1))
+var left = 1 - 2 - 3 - 4
+var right = 1 ** 2 ** 3 ** 4
