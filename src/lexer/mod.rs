@@ -532,7 +532,9 @@ pub mod test_utils {
 		pub fn modulo(&mut self) -> Token { self.token("%", TokenType::operator_modulo) }
 		pub fn num(&mut self, number:&str) -> Token { self.token(number, TokenType::number) }
 		pub fn ident(&mut self, ident:impl Into<String>) -> Token { self.token(ident, TokenType::identifier) }
+		/// Adds the double quotes.
 		pub fn str(&mut self, ident:impl Into<String>) -> Token { self.token(format!("\"{}\"", ident.into()), TokenType::string) }
+		/// Adds the backticks.
 		pub fn link(&mut self, ident:impl Into<String>) -> Token { self.token(format!("`{}`", ident.into()), TokenType::string) }
 	}
 }

@@ -695,14 +695,155 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 }
 
 
+pub mod test_utils {
+	#![allow(dead_code)]
+	
+	pub mod expr {
+
+		use crate::lexer::*;
+		use crate::parser::*;
+
+		pub fn binary(left:ASTExpression, operator: Token, right: ASTExpression) -> ASTExpression {
+			ASTExpression::BinaryOperator { left: Box::new(left), operator, right: Box::new(right) }
+		}
+		pub fn unary(operator: Token, operand: ASTExpression) -> ASTExpression {
+			ASTExpression::UnaryOperator { operator, operand: Box::new(operand) }
+		}
+		pub fn leaf(token: Token) -> ASTExpression {
+			ASTExpression::Leaf(token)
+		}
+		pub fn num(num: &'static str) -> ASTExpression {
+			ASTExpression::Leaf(Token { text: num.to_string(), variant: TokenType::number, span: 0..0 })
+		}
+		/// Adds the double quotes.
+		pub fn str(str: &'static str) -> ASTExpression {
+			ASTExpression::Leaf(Token { text: format!("\"{str}\""), variant: TokenType::string, span: 0..0 })
+		}
+		pub fn ident(str: &'static str) -> ASTExpression {
+			ASTExpression::Leaf(Token { text: str.to_string(), variant: TokenType::identifier, span: 0..0 })
+		}
+	}
+	pub mod node {
+		use crate::parser::*;
+
+		pub fn expr_statement(expr: ASTExpression) -> ASTNode {
+			ASTNode { data: ASTNodeData::Statement(ASTStatement::Expression(expr)), span: 0..0 }
+		}
+		pub fn root(statement:ASTNode) -> AST {
+			ASTBlock::Root { statements: vec![ statement ] }
+		}
+		pub fn root_expr(expr: ASTExpression) -> Result<AST, CError> {
+			Ok(root(expr_statement(expr)))
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
-	use crate::lexer::test_utils::TokenBuilder;
+	use crate::lexer::test_utils::*;
+	use crate::parser::test_utils::expr as e;
+	use crate::parser::test_utils::node as n;
 	use crate::parser::*;
 	use pretty_assertions::assert_eq;
 
 	#[test]
-	fn parse_test(){
+	fn parse_expr_literal_number(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.num("55"),
+			]),
+			n::root_expr(e::num("55"))
+		);
+	}
+	#[test]
+	fn parse_expr_literal_string(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.str("abc"),
+			]),
+			n::root_expr(e::str("abc"))
+		);
+	}
+	#[test]
+	fn parse_expr_literal_link(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.link("message1"),
+			]),
+			n::root_expr(e::leaf(b.link("message1")))
+		);
+	}
+	#[test]
+	fn parse_expr_literal_ident(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("qwerty"),
+			]),
+			n::root_expr(e::ident("qwerty"))
+		);
+	}
+	#[test]
+	fn parse_expr_binary_simple_1(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.num("55"),
+				b.add(),
+				b.num("3")
+			]),
+			n::root_expr(
+				e::binary(e::num("55"), b.add(), e::num("3"))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_binary_simple_2(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("x"),
+				b.token("*=", TokenType::operator_assignment_multiply),
+				b.num("3")
+			]),
+			n::root_expr(
+				e::binary(e::ident("x"), b.token("*=", TokenType::operator_assignment_multiply), e::num("3"))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_unary_simple_1(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.minus(),
+				b.ident("x"),
+			]),
+			n::root_expr(
+				e::unary(b.minus(), e::ident("x"))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_unary_simple_2(){
+		let mut b = TokenBuilder::new();
+		let flip = b.token("~", TokenType::operator_bitwise_flip);
+		assert_eq!(
+			parse(vec![
+				flip.clone(),
+				b.ident("abc"),
+			]),
+			n::root_expr(
+				e::unary(flip.clone(), e::ident("abc"))
+			)
+		);
+	}
+
+	#[test]
+	fn parse_program_example_factorial(){
 		// print("Hello, world!")
 		// printflush(`message1`)
 
@@ -727,28 +868,18 @@ mod tests {
 				b.newline_last(),
 			]),
 			Ok(ASTBlock::Root { statements: vec![
-				ASTNode {
-					data: ASTNodeData::Statement(
-						ASTStatement::Expression(ASTExpression::FunctionCall {
-							function: Box::new(ASTExpression::Leaf(b.ident("print"))),
-							arguments: vec![
-								ASTExpression::Leaf(b.str("Hello, world!"))
-							]
-						})
-					),
-					span: 0..0
-				},
-				ASTNode {
-					data: ASTNodeData::Statement(
-						ASTStatement::Expression(ASTExpression::FunctionCall {
-							function: Box::new(ASTExpression::Leaf(b.ident("printflush"))),
-							arguments: vec![
-								ASTExpression::Leaf(b.link("message1"))
-							]
-						})
-					),
-					span: 0..0
-				},
+				n::expr_statement(ASTExpression::FunctionCall {
+					function: Box::new(e::ident("print")),
+					arguments: vec![
+						e::str("Hello, world!")
+					]
+				}),
+				n::expr_statement(ASTExpression::FunctionCall {
+					function: Box::new(e::ident("printflush")),
+					arguments: vec![
+						e::leaf(b.link("message1"))
+					]
+				}),
 				ASTNode {
 					data: ASTNodeData::Block(ASTBlock::Function {
 						name: b.ident("factorial"),
@@ -757,14 +888,10 @@ mod tests {
 						statements: vec![
 							ASTNode {
 								data: ASTNodeData::Block(ASTBlock::If {
-									condition: ASTExpression::BinaryOperator {
-										left: Box::new(ASTExpression::Leaf(b.ident("x"))),
-										operator: b.lt(),
-										right: Box::new(ASTExpression::Leaf(b.num("1"))),
-									},
+									condition: e::binary(e::ident("x"), b.lt(), e::num("1")),
 									statements: vec![
 										ASTNode {
-											data: ASTNodeData::Statement(ASTStatement::Return(Some(ASTExpression::Leaf(b.num("1"))))),
+											data: ASTNodeData::Statement(ASTStatement::Return(Some(e::num("1")))),
 											span: 0..0
 										}
 									]
@@ -773,18 +900,16 @@ mod tests {
 							},
 							ASTNode {
 								data: ASTNodeData::Statement(ASTStatement::Return(Some(
-									ASTExpression::BinaryOperator {
-										left: Box::new(ASTExpression::Leaf(b.ident("x"))),
-										operator: b.mult(),
-										right: Box::new(ASTExpression::FunctionCall {
-											function: Box::new(ASTExpression::Leaf(b.ident("factorial"))),
-											arguments: vec![ASTExpression::BinaryOperator {
-												left: Box::new(ASTExpression::Leaf(b.ident("x"))),
-												operator: b.minus(),
-												right: Box::new(ASTExpression::Leaf(b.num("1"))),
-											}]
-										}),
-									}
+									e::binary(
+										e::ident("x"),
+										b.mult(),
+										ASTExpression::FunctionCall {
+											function: Box::new(e::ident("factorial")),
+											arguments: vec![
+												e::binary(e::ident("x"), b.minus(), e::num("1"))
+											]
+										}
+									)
 								))),
 								span: 0..0
 							}
