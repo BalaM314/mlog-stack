@@ -41,6 +41,7 @@ pub enum TokenType {
 	string,
 	link,
 	keyword_if,
+	keyword_else,
 	keyword_for,
 	keyword_loop,
 	keyword_while,
@@ -421,6 +422,7 @@ pub fn lexer(input:&str) -> Result<Vec<Token>, CError> {
 			ST::whitespace => continue,
 			ST::word => match &st.text[..] {
 				"if" => TokenType::keyword_if,
+				"else" => TokenType::keyword_else,
 				"for" => TokenType::keyword_for,
 				"loop" => TokenType::keyword_loop,
 				"while" => TokenType::keyword_while,

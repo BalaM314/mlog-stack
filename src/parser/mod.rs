@@ -28,6 +28,7 @@ pub enum ASTBlock {
 	If {
 		condition: ASTExpression,
 		statements: Vec<ASTNode>,
+		else_statements: Vec<ASTNode>,
 	},
 	Loop {
 		statements: Vec<ASTNode>,
@@ -146,7 +147,13 @@ fn indent_string(x:String) -> String {
 impl Display for ASTBlock {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			ASTBlock::If { condition, statements } =>
+			ASTBlock::If { condition, statements, else_statements } if !else_statements.is_empty() =>
+				write!(f,
+					"if {condition} {{\n{}\n}} else {{\n{}\n}}",
+					indent_string(display_statements(statements)),
+					indent_string(display_statements(else_statements))
+				),
+			ASTBlock::If { condition, statements, .. } =>
 				write!(f, "if {condition} {{\n{}\n}}", indent_string(display_statements(statements))),
 			ASTBlock::Loop { statements } =>
 				write!(f, "loop {{\n{}\n}}", indent_string(display_statements(statements))),
@@ -304,9 +311,13 @@ fn operator_priority(operator:TokenType) -> u8 {
 	}
 }
 
+fn skip_newlines(tokens:&mut Peekable<impl Iterator<Item = Token>>){
+	tokens.peeking_take_while(|t| t.variant == TokenType::newline).count(); //skip all newlines
+}
+
 fn get_leaf_node_or_paren_nodes(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<ASTExpressionBuilder, CError> {
 	use TokenType as TT;
-	tokens.peeking_take_while(|t| t.variant == TT::newline).count(); //skip all newlines
+	skip_newlines(tokens);
 	let token = tokens.next().ok_or(err_!("Unexpected EOF", None))?;
 	match token.variant {
 		TT::identifier | TT::link | TT::number | TT::string => Ok(ASTExpressionBuilder::Leaf(token)),
@@ -476,24 +487,53 @@ fn get_type_optional(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Resul
 	}
 }
 
+/// This function just reads tokens from input until the condition is satisfied
+/// or the end is reached.
+/// It does not check if the tokens make any sense, or if there are unmatched parentheses.
 fn get_tokens_until_eol(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Vec<Token> {
+	use TokenType as TT;
+
 	let mut paren_nest_level = 0;
 	let mut brace_nest_level = 0;
-	let out: Vec<Token> = tokens.peeking_take_while(move |tk| {
-		use TokenType as TT;
-		match tk.variant {
-			TT::parenthesis_open => paren_nest_level += 1,
-			TT::parenthesis_close => paren_nest_level -= 1,
-			TT::brace_open => brace_nest_level += 1,
-			TT::brace_close => brace_nest_level -= 1,
-			_ => {}
+	let mut out = vec![];
+	let continue_to_else_after_newline = tokens.peek().is_some_and(|t| t.variant == TT::keyword_if);
+	loop {
+		out.extend(tokens.peeking_take_while(move |tk| {
+			match tk.variant {
+				TT::parenthesis_open => paren_nest_level += 1,
+				TT::parenthesis_close => paren_nest_level -= 1,
+				TT::brace_open => brace_nest_level += 1,
+				TT::brace_close => brace_nest_level -= 1,
+				_ => {}
+			}
+			!(paren_nest_level == 0 && brace_nest_level == 0 && matches!(tk.variant, TT::newline | TT::punctuation_semicolon))
+		}));
+		if continue_to_else_after_newline {
+			//skip and return newlines or semicolons
+			out.extend(tokens.peeking_take_while(
+				|tk| matches!(tk.variant, TT::newline | TT::punctuation_semicolon)
+			));
+			//Special case:
+			//If the tokens started with if,
+			//and there is an else after the newlines, keep reading
+			//example:
+			//
+			//if(a) b
+			//else if(c) d
+			//else e
+			//
+			//Everything from b to e is one block
+			match tokens.peek() {
+				//look at the next line if it starts with an else
+				Some(Token { variant: TT::keyword_else, .. }) => continue,
+				//otherwise, return
+				_ => return out
+			}
+		} else {
+			tokens.next(); //skip a token, it is either a newline, semicolon, or nothing
+			return out;
 		}
-		!(paren_nest_level == 0 && brace_nest_level == 0 && matches!(tk.variant, TT::newline | TT::punctuation_semicolon))
-	}).collect();
-	//Consume the EOL or semicolon, if it exists
-	//If it doesn't, that's fine
-	tokens.next();
-	out
+	}
 }
 
 fn require_type(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: TokenType) -> Result<Token, CError> {
@@ -568,7 +608,7 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 	while let Some(tk) = tokens.peek() {
 		use TokenType as TT;
 		let statement: ASTNodeData = match tk.variant {
-			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate =>
+			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate | TT::keyword_else =>
 				return err!("Unexpected token", tk.span.clone()),
 			TT::operator_access |
 			TT::operator_exponentiate |
@@ -630,7 +670,15 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 				let condition = get_expression_allow_line_breaks(&mut tokens)?;
 				require_type(&mut tokens, TokenType::parenthesis_close)?;
 				let statements = parse_block(&mut tokens)?;
-				ASTNodeData::Block(ASTBlock::If { condition, statements })
+				skip_newlines(&mut tokens);
+				let else_statements = match tokens.peek() {
+					Some(Token { variant: TokenType::keyword_else, .. }) => {
+						tokens.next();
+						parse_block(&mut tokens)?
+					},
+					_ => Vec::new(),
+				};
+				ASTNodeData::Block(ASTBlock::If { condition, statements, else_statements })
 			},
 			TT::keyword_fn => {
 				tokens.next();
@@ -894,7 +942,8 @@ mod tests {
 											data: ASTNodeData::Statement(ASTStatement::Return(Some(e::num("1")))),
 											span: 0..0
 										}
-									]
+									],
+									else_statements: vec![],
 								}),
 								span: 0..0,
 							},
