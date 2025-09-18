@@ -45,7 +45,7 @@ pub enum ASTBlock {
 	},
 	Function {
 		name: Token,
-		arguments: Vec<(Token, ASTType)>,
+		parameters: Vec<(Token, ASTType)>,
 		return_type: Option<ASTType>,
 		statements: Vec<ASTNode>,
 	},
@@ -164,7 +164,7 @@ impl Display for ASTBlock {
 				}, indent_string(display_statements(statements))),
 			ASTBlock::While { condition, statements } =>
 				write!(f, "while({condition}){{\n{}\n}}", indent_string(display_statements(statements))),
-			ASTBlock::Function { name, arguments, return_type, statements } =>
+			ASTBlock::Function { name, parameters: arguments, return_type, statements } =>
 				write!(f, "fn {name}({}){} {{\n{}\n}}",
 					arguments.iter().map(|(name, typ)| format!("{name}: {typ}")).join(", "),
 					match return_type {
@@ -480,7 +480,7 @@ fn get_type_optional(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Resul
 		Some(Token { variant: TT::punctuation_colon, .. }) => {
 			let colon = tokens.next().unwrap();
 			let token = tokens.next().ok_or(err_!("expected an identifier, got end of input", colon.span))?;
-			if token.variant != TT::identifier { return err!(format!("expected an identifier, got \"{}\"", token.text), token.span); }
+			if token.variant != TT::identifier { return err!(format!("expected a type, got \"{}\"", token.text), token.span); }
 			Ok(Some(ASTType::Literal(token)))
 		},
 		_ => Ok(None),
@@ -685,15 +685,15 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 				let name = require_type(&mut tokens, TokenType::identifier)?;
 				ASTNodeData::Block(ASTBlock::Function {
 					name,
-					arguments: {
-						let mut arguments = vec![];
+					parameters: {
+						let mut parameters = vec![];
 						require_type(&mut tokens, TokenType::parenthesis_open)?;
 						while let Some(token) = tokens.next() {
 							match token.variant {
 								TT::identifier => {
 									let span = token.span.clone();
-									let typ = get_type_optional(&mut tokens)?.ok_or(err_!("Please specify the type for this token", span))?;
-									arguments.push((token, typ));
+									let typ = get_type_optional(&mut tokens)?.ok_or(err_!(format!("Please specify the type for the parameter {}", token.text), span))?;
+									parameters.push((token, typ));
 									if tokens.peek().is_some_and(|t| t.variant == TokenType::punctuation_comma) {
 										tokens.next();
 									}
@@ -702,7 +702,7 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 								_ => return err!("Unexpected token: Expected an argument, or end of arguments", token.span),
 							}
 						}
-						arguments
+						parameters
 					},
 					return_type: get_type_optional(&mut tokens)?,
 					statements: parse_block(&mut tokens)?,
@@ -931,7 +931,7 @@ mod tests {
 				ASTNode {
 					data: ASTNodeData::Block(ASTBlock::Function {
 						name: b.ident("factorial"),
-						arguments: vec![(b.ident("x"), ASTType::Literal(b.ident("num")))],
+						parameters: vec![(b.ident("x"), ASTType::Literal(b.ident("num")))],
 						return_type: Some(ASTType::Literal(b.ident("num"))),
 						statements: vec![
 							ASTNode {

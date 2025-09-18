@@ -56,5 +56,5 @@ if(one){
 //deserialization needs to be inserted whenever the variable could have been changed
 
 //fn example(static arg1: unit, arg2: build, *static arg3: block, arg4: *num){}
-//fn example(arg1: unit, arg2: build, arg3: block, arg4: num){}
+fn example(arg1: unit, arg2: build, arg3: block, arg4: num){}
 
