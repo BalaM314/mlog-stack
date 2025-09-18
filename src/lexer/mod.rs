@@ -321,7 +321,7 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 			'b' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_b),
 			'o' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_o),
 			'$' => (1, ST::punctuation_dollar),
-			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| matches!(c, 'a'..='z' | 'A'..='Z' | '_' | '@' | '$')).count() + 1, ST::word),
+			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '@' | '$')).count() + 1, ST::word),
 			'0'..='9' => (chars.peeking_take_while(|(_, c)| c.is_numeric()).count() + 1, ST::numeric_fragment),
 			_ => return err!(format!("Invalid char {char}"), i..i+1),
 		};
