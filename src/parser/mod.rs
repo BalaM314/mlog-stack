@@ -91,7 +91,15 @@ pub enum ASTExpression {
 	FunctionCall {
 		function: Box<ASTExpression>,
 		arguments: Vec<ASTExpression>,
-	}
+	},
+	/// values.len() must always be 1 less than strings.len()
+	/// if the string is "", then strings must be vec![""] and values must be vec![]
+	/// if the initial string was "${0}", then strings must be vec!["",""] and values must be vec![0]
+	TemplateString {
+		/// Must be of type TokenType::string_fragment
+		strings: Vec<Token>,
+		values: Vec<ASTExpression>,
+	},
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -111,7 +119,15 @@ enum ASTExpressionBuilder {
 	FunctionCall {
 		function: Box<ASTExpressionBuilder>,
 		arguments: Vec<ASTExpressionBuilder>,
-	}
+	},
+	/// values.len() must always be 1 less than strings.len()
+	/// if the string is "", then strings must be vec![""] and values must be vec![]
+	/// if the initial string was "${0}", then strings must be vec!["",""] and values must be vec![0]
+	TemplateString {
+		/// Must be of type TokenType::string_fragment
+		strings: Vec<Token>,
+		values: Vec<ASTExpressionBuilder>,
+	},
 }
 impl ASTExpressionBuilder {
 	fn set_paren(&mut self){
@@ -132,6 +148,8 @@ impl Into<ASTExpression> for ASTExpressionBuilder {
 				ASTExpression::BinaryOperator { left: Box::new((*left).into()), operator, right: Box::new((*right).into()) },
 			ASTExpressionBuilder::FunctionCall { function, arguments } =>
 				ASTExpression::FunctionCall { function: Box::new((*function).into()), arguments: arguments.into_iter().map(|n| n.into()).collect() },
+			ASTExpressionBuilder::TemplateString { strings, values } =>
+				ASTExpression::TemplateString { strings, values: values.into_iter().map(|n| n.into()).collect() },
 		}
 	}
 }
@@ -204,6 +222,16 @@ impl Display for ASTExpression {
 			ASTExpression::BinaryOperator { left, operator, right } => write!(f, "({left} {operator} {right})"),
 			ASTExpression::FunctionCall { function, arguments } =>
 				write!(f, "{function}({})", arguments.iter().map(|a| format!("{a}")).join(", ")),
+			ASTExpression::TemplateString { strings, values } => {
+				let mut values = values.iter();
+				for str in strings {
+					write!(f, "{str}")?;
+					if let Some(value) = values.next() {
+						write!(f, "${{{value}}}")?;
+					}
+				}
+				Ok(())
+			}
 		}
 	}
 }
@@ -318,22 +346,24 @@ fn skip_newlines(tokens:&mut Peekable<impl Iterator<Item = Token>>){
 fn get_leaf_node_or_paren_nodes(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<ASTExpressionBuilder, CError> {
 	use TokenType as TT;
 	skip_newlines(tokens);
-	let token = tokens.next().ok_or(err_!("Unexpected EOF", None))?;
+	let token = tokens.peek().ok_or(err_!("Unexpected EOF", None))?;
 	match token.variant {
-		TT::identifier | TT::link | TT::number | TT::string => Ok(ASTExpressionBuilder::Leaf(token)),
+		TT::identifier | TT::link | TT::number | TT::string => Ok(ASTExpressionBuilder::Leaf(tokens.next().unwrap())),
+		TT::string_fragment => get_string_fragment(tokens),
 		TT::parenthesis_open => {
+			tokens.next().unwrap();
 			let mut expr = get_expression_inner(tokens, true)?;
 			require_type(tokens, TokenType::parenthesis_close)?;
 			expr.set_paren();
 			Ok(expr)
 		},
-		t => err!(format!("Unexpected token: expected a leaf node or the start of an expression, got {t:?}"), token.span),
+		t => err!(format!("Unexpected token: expected a leaf node or the start of an expression, got {t:?}"), tokens.next().unwrap().span),
 	}
 }
 
 fn insert_binary_operator(expr: ASTExpressionBuilder, operator: Token, right: ASTExpressionBuilder) -> ASTExpressionBuilder {
 	match expr {
-		ASTExpressionBuilder::Leaf(_) =>
+		ASTExpressionBuilder::Leaf(_) | ASTExpressionBuilder::TemplateString { .. } =>
 			ASTExpressionBuilder::BinaryOperator { left: Box::new(expr), operator, right: Box::new(right), is_paren: false },
 		ASTExpressionBuilder::UnaryOperator { operator: ref unary, is_paren, .. }
 		if is_paren || operator_priority(operator.variant.clone()) <= operator_priority(unary.variant.clone()) =>
@@ -355,7 +385,7 @@ fn insert_binary_operator(expr: ASTExpressionBuilder, operator: Token, right: AS
 
 fn insert_function_call(expr: ASTExpressionBuilder, arguments: Vec<ASTExpressionBuilder>) -> ASTExpressionBuilder {
 	match expr {
-		ASTExpressionBuilder::Leaf(_) | ASTExpressionBuilder::FunctionCall { .. } =>
+		ASTExpressionBuilder::Leaf(_) | ASTExpressionBuilder::FunctionCall { .. } | ASTExpressionBuilder::TemplateString { .. } =>
 			ASTExpressionBuilder::FunctionCall { function: Box::new(expr), arguments },
 		ASTExpressionBuilder::UnaryOperator { is_paren, .. } | ASTExpressionBuilder::BinaryOperator { is_paren, .. } if is_paren =>
 			ASTExpressionBuilder::FunctionCall { function: Box::new(expr), arguments },
@@ -364,6 +394,23 @@ fn insert_function_call(expr: ASTExpressionBuilder, arguments: Vec<ASTExpression
 		ASTExpressionBuilder::BinaryOperator { left, operator: existing, right: left_right, .. } =>
 			ASTExpressionBuilder::BinaryOperator { left: left, operator: existing, right: Box::new(insert_function_call(*left_right, arguments)), is_paren: false },
 	}
+}
+
+fn get_string_fragment(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Result<ASTExpressionBuilder, CError> {
+	use TokenType as TT;
+	let mut strings = vec![tokens.next().unwrap()];
+	let mut values = vec![];
+	while let Some(Token { variant: TT::interpolation_start, .. }) = tokens.peek() {
+		values.push(get_expression_inner(tokens, true)?);
+		require_type(tokens, TokenType::interpolation_end)?;
+		strings.push(require_type_p(tokens, |t| t == TokenType::string_fragment || t == TokenType::string, "string")?);
+	}
+	if values.is_empty() {
+		eprintln!("{:?}", tokens.peek().unwrap().span);
+		dbg!(strings);
+		unreachable!()
+	}
+	Ok(ASTExpressionBuilder::TemplateString { strings, values })
 }
 
 /// Left-to-right parsing. O(n) time complexity.
@@ -400,7 +447,7 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 						nest_level -= 1;
 						if nest_level < 0 { break }
 						tokens.next();
-					},
+					}
 					TT::operator_minus if expr.is_none() => {
 						let operator = tokens.next().unwrap();
 						let right = get_leaf_node_or_paren_nodes(tokens)?;
@@ -446,10 +493,12 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 						let right = get_leaf_node_or_paren_nodes(tokens)?;
 						expr.replace(insert_binary_operator(left, operator, right));
 					},
+					TT::identifier | TT::link | TT::number | TT::string | TT::string_fragment if expr.is_some() => return err!("Expected operator or end of expression, not another expression", next.span.clone()),
 					TT::identifier | TT::link | TT::number | TT::string => {
 						if expr.is_some() { return err!("Expected operator or end of expression, not another expression", next.span.clone()); }
 						expr.replace(ASTExpressionBuilder::Leaf(tokens.next().unwrap()));
 					},
+					TT::string_fragment => expr = Some(get_string_fragment(tokens)?),
 					TT::newline if allow_line_breaks => { tokens.next(); },
 					_ => { break },
 				}
@@ -539,9 +588,17 @@ fn get_tokens_until_eol(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Ve
 fn require_type(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: TokenType) -> Result<Token, CError> {
 	match tokens.next() {
 		Some(t) => if t.variant != typ {
-			err!(format!("expected {typ:?}, got \"{}\"", t.text), t.span)
+			err!(format!("expected {typ:?}, got \"{}\", ({:?})", t.text, t.variant), t.span)
 		} else { Ok(t) },
 		_ => err!(format!("expected {typ:?}, got end of file"), None),
+	}
+}
+fn require_type_p(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: impl Fn(TokenType) -> bool, typ_name: &'static str) -> Result<Token, CError> {
+	match tokens.next() {
+		Some(t) => if !typ(t.variant) {
+			err!(format!("expected {typ_name}, got \"{}\", ({:?})", t.text, t.variant), t.span)
+		} else { Ok(t) },
+		_ => err!(format!("expected {typ_name}, got end of file"), None),
 	}
 }
 fn require_type_peek(tokens:&mut Peekable<impl Iterator<Item = Token>>, typ: TokenType) -> Result<(), CError> {
@@ -608,7 +665,7 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 	while let Some(tk) = tokens.peek() {
 		use TokenType as TT;
 		let statement: ASTNodeData = match tk.variant {
-			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::punctuation_interpolate | TT::keyword_else =>
+			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::interpolation_start | TT::interpolation_end | TT::keyword_else =>
 				return err!("Unexpected token", tk.span.clone()),
 			TT::operator_access |
 			TT::operator_exponentiate |
@@ -732,7 +789,7 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 				let statements = parse_block(&mut tokens)?;
 				ASTNodeData::Block(ASTBlock::While { condition, statements })
 			},
-			TT::identifier | TT::link | TT::number | TT::string |
+			TT::identifier | TT::link | TT::number | TT::string | TT::string_fragment |
 			TT::operator_minus | TT::operator_not | TT::operator_increment | TT::operator_bitwise_flip |
 			TT::parenthesis_open =>
 				ASTNodeData::Statement(ASTStatement::Expression(get_expression(&mut tokens)?)),

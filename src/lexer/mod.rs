@@ -33,12 +33,27 @@ pub struct SubToken {
 	pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
 	newline,
 	number,
 	identifier,
 	string,
+	/// Indicates a part of an interpolated string.
+	/// example:
+	/// ```
+	/// "aaa${2+3}bbb"
+	/// string_fragment “aaa
+	/// interpolation_start ${
+	/// number 2
+	/// operator_add +
+	/// number 3
+	/// interpolation_end }
+	/// string_fragment bbb”
+	/// ```
+	string_fragment,
+	interpolation_start,
+	interpolation_end,
 	link,
 	keyword_if,
 	keyword_else,
@@ -101,10 +116,9 @@ pub enum TokenType {
 	punctuation_colon,
 	punctuation_semicolon,
 	punctuation_comma,
-	punctuation_interpolate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubTokenType {
 	escape,
 	numeric_fragment,
@@ -321,7 +335,7 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 			'b' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_b),
 			'o' if out.last().is_some_and(|s| s.variant == ST::numeric_fragment) => (1, ST::numeric_o),
 			'$' => (1, ST::punctuation_dollar),
-			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '@' | '$')).count() + 1, ST::word),
+			'a'..='z' | 'A'..='Z' | '_' | '@' => (chars.peeking_take_while(|(_, c)| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '@')).count() + 1, ST::word),
 			'0'..='9' => (chars.peeking_take_while(|(_, c)| c.is_numeric()).count() + 1, ST::numeric_fragment),
 			_ => return err!(format!("Invalid char {char}"), i..i+1),
 		};
@@ -334,6 +348,58 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 pub fn lexer(input:&str) -> Result<Vec<Token>, CError> {
 	let mut out = vec![];
 	let mut sub_tokens = get_sub_tokens(input)?.into_iter().peekable();
+
+	//Some state management is necessary to parse interpolated strings
+	enum BraceType {
+		StringInterpolationSingle,
+		StringInterpolationDouble,
+		Unknown,
+	}
+	let mut brace_nest_stack: Vec<(BraceType, Span)> = vec![];
+	macro_rules! process_string {
+		($st_variant:expr, $st_span:expr, $st_offset:literal, $sub_tokens:expr, $process_loop:lifetime) => {
+			while let Some(st2) = $sub_tokens.next() {
+				if st2.variant == ST::escape { 
+					$sub_tokens.next(); //if this is none, that's fine, the loop will exit and it will be treated as an unterminated string literal
+				}
+				if $st_variant != ST::quote_backtick && st2.variant == ST::punctuation_dollar &&
+				matches!($sub_tokens.peek(), Some(SubToken { variant: ST::brace_open, .. })) {
+					let string_fragment_span = ($st_span.start + $st_offset)..st2.span.start;
+					out.push(Token {
+						text: input[string_fragment_span.clone()].to_string(),
+						variant: TokenType::string_fragment,
+						span: string_fragment_span,
+					});
+					let brace = $sub_tokens.next().unwrap();
+					let token_span = st2.span.start..brace.span.end;
+					brace_nest_stack.push((match $st_variant {
+						ST::quote_single => BraceType::StringInterpolationSingle,
+						ST::quote_double => BraceType::StringInterpolationDouble,
+						_ => unreachable!(),
+					}, brace.span));
+					out.push(Token {
+						text: input[token_span.clone()].to_string(),
+						variant: TokenType::interpolation_start,
+						span: token_span
+					});
+					continue $process_loop;
+				}
+				if st2.variant == $st_variant {
+					let span = ($st_span.start + $st_offset)..st2.span.end;
+					out.push(Token {
+						text: input[span.clone()].to_string(),
+						variant: match $st_variant {
+							ST::quote_backtick => TokenType::link,
+							_ => TokenType::string,
+						}, span });
+					continue $process_loop;
+				}
+			}
+			let whole_string = $st_span.start..input.len();
+			return err!("Unterminated string literal", $st_span, whole_string);
+		}
+	}
+
 	'process_loop:
 	while let Some(st) = sub_tokens.next() {
 		use SubTokenType as ST;
@@ -374,8 +440,24 @@ pub fn lexer(input:&str) -> Result<Vec<Token>, CError> {
 
 			ST::parenthesis_open => TokenType::parenthesis_open,
 			ST::parenthesis_close => TokenType::parenthesis_close,
-			ST::brace_open => TokenType::brace_open,
-			ST::brace_close => TokenType::brace_close,
+			ST::brace_open => {
+				brace_nest_stack.push((BraceType::Unknown, st.span.clone()));
+				TokenType::brace_open
+			},
+			ST::brace_close => match brace_nest_stack.pop() {
+				Some((brace, _)) => match brace {
+					BraceType::Unknown => TokenType::brace_close,
+					BraceType::StringInterpolationDouble => {
+						out.push(Token { text: st.text, variant: TokenType::interpolation_end, span: st.span.clone() });
+						process_string!(SubTokenType::quote_double, st.span, 1, sub_tokens, 'process_loop);
+					},
+					BraceType::StringInterpolationSingle => {
+						out.push(Token { text: st.text, variant: TokenType::interpolation_end, span: st.span.clone() });
+						process_string!(SubTokenType::quote_single, st.span, 1, sub_tokens, 'process_loop);
+					}
+				},
+				None => err!("Unmatched }", st.span)?,
+			},
 			ST::punctuation_colon => TokenType::punctuation_colon,
 			ST::punctuation_semicolon => TokenType::punctuation_semicolon,
 			ST::punctuation_comma => TokenType::punctuation_comma,
@@ -451,32 +533,12 @@ pub fn lexer(input:&str) -> Result<Vec<Token>, CError> {
 			},
 			ST::comment_end => return err!("Unexpected token, no multiline comment to end", st.span),
 			ST::quote_double | ST::quote_single | ST::quote_backtick => {
-				while let Some(st2) = sub_tokens.next() {
-					if st2.variant == ST::escape { 
-						sub_tokens.next(); //if this is none, that's fine, the loop will exit and it will be treated as an unterminated string literal
-					}
-					// TODO: string interpolation
-					// if st2.variant == ST::punctuation_dollar { match sub_tokens.peek() {
-					// 	Some(SubToken { variant: ST::brace_open, .. }) => {
-					// 		sub_tokens.next();
-					// 	},
-					// 	_ => {}
-					// }}
-					if st2.variant == st.variant {
-						let span = st.span.start..st2.span.end;
-						out.push(Token {
-							text: input[span.clone()].to_string(),
-							variant: match st.variant {
-								ST::quote_backtick => TokenType::link,
-								_ => TokenType::string,
-							}, span });
-						continue 'process_loop;
-					}
-				}
-				let whole_string = st.span.start..input.len();
-				return err!("Unterminated string literal", st.span, whole_string);
+				process_string!(st.variant, st.span, 0, sub_tokens, 'process_loop);
 			},
 		}});
+	}
+	if let Some(unmatched) = brace_nest_stack.pop() {
+		return err!("Unmatched {", unmatched.1);
 	}
 	Ok(out)
 }
