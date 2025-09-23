@@ -16,7 +16,7 @@ impl CError {
 }
 impl Display for CError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.message)
+    write!(f, "{}\n{:?}", self.message, self.span_detailed)
   }
 }
 impl Error for CError {}
