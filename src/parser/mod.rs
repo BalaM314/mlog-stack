@@ -414,7 +414,7 @@ fn get_string_fragment(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Res
 	Ok(ASTExpressionBuilder::TemplateString { strings, values })
 }
 
-/// Left-to-right parsing. O(n) time complexity.
+/// Left-to-right parsing. O(n log n) time complexity.
 fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow_line_breaks: bool) -> Result<ASTExpressionBuilder, CError> {
 	use TokenType as TT;
 	match tokens.peek() {
