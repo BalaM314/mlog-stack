@@ -15,8 +15,11 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
 	let filename = args().nth(1).ok_or("please specify a file to read")?;
 	let data = fs::read_to_string(filename)?;
-	let output = parser::parse(lexer::lexer(&data)?)?;
-	println!("{output}");
+	let output = lexer::lexer(&data).and_then(parser::parse);
+	match output {
+		Ok(output) => println!("{output}"),
+		Err(err) => eprintln!("{}", err.show(&data))
+	}
 	Ok(())
 
 }
