@@ -401,6 +401,7 @@ fn get_string_fragment(tokens:&mut Peekable<impl Iterator<Item = Token>>) -> Res
 	let mut strings = vec![tokens.next().unwrap()];
 	let mut values = vec![];
 	while let Some(Token { variant: TT::interpolation_start, .. }) = tokens.peek() {
+		tokens.next().unwrap();
 		values.push(get_expression_inner(tokens, true)?);
 		require_type(tokens, TokenType::interpolation_end)?;
 		strings.push(require_type_p(tokens, |t| t == TokenType::string_fragment || t == TokenType::string, "string")?);
@@ -814,6 +815,20 @@ pub mod test_utils {
 		pub fn unary(operator: Token, operand: ASTExpression) -> ASTExpression {
 			ASTExpression::UnaryOperator { operator, operand: Box::new(operand) }
 		}
+		pub fn func(function:ASTExpression, arguments: Vec<ASTExpression>) -> ASTExpression {
+			ASTExpression::FunctionCall { function: Box::new(function), arguments }
+		}
+		pub fn template_string(strings:Vec<&str>, values: Vec<ASTExpression>) -> ASTExpression {
+			let last_i = strings.len() - 1;
+			ASTExpression::TemplateString {
+				strings: strings.iter().enumerate().map(|(i, ref str)| Token {
+					text: if i == 0 { format!("\"{str}") } else if i == last_i { format!("{str}\"") } else { str.to_string() },
+					variant: if i == last_i { TokenType::string } else { TokenType::string_fragment },
+					span: 0..0
+				}).collect(),
+				values
+			}
+		}
 		pub fn leaf(token: Token) -> ASTExpression {
 			ASTExpression::Leaf(token)
 		}
@@ -943,6 +958,60 @@ mod tests {
 			]),
 			n::root_expr(
 				e::unary(flip.clone(), e::ident("abc"))
+			)
+		);
+	}
+
+	#[test]
+	fn parse_expr_template_string(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("print"),
+				b.popen(),
+				b.strf_start("Hello, "),
+				b.interp_start(),
+				b.num("2"),
+				b.add(),
+				b.strf_start(""),
+				b.interp_start(),
+				b.ident("a"),
+				b.shr(),
+				b.ident("b"),
+				b.interp_end(),
+				b.strf(""),
+				b.interp_start(),
+				b.strf_start(""),
+				b.interp_start(),
+				b.flip(),
+				b.ident("x"),
+				b.interp_end(),
+				b.strf_end(""),
+				b.interp_end(),
+				b.strf_end(""),
+				b.add(),
+				b.num("3"),
+				b.interp_end(),
+				b.strf_end(" world"),
+			]),
+			n::root_expr(
+				e::func(e::ident("print"), vec![
+					e::template_string(vec!["Hello, ", " world"], vec![
+						e::binary(
+							e::binary(e::num("2"), b.add(), e::template_string(
+								vec!["", "", ""],
+								vec![
+									e::binary(e::ident("a"), b.shr(), e::ident("b")),
+									e::template_string(vec!["", ""], vec![
+										e::unary(b.flip(), e::ident("x"))
+									])
+								]
+							)),
+							b.add(),
+							e::num("3")
+						)
+					])
+				])
 			)
 		);
 	}

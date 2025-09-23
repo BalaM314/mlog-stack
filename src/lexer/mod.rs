@@ -574,6 +574,8 @@ pub mod test_utils {
 		pub fn kvar(&mut self) -> Token { self.token("var", TokenType::keyword_var) }
 		pub fn kval(&mut self) -> Token { self.token("val", TokenType::keyword_val) }
 		pub fn kcfg(&mut self) -> Token { self.token("cfg", TokenType::keyword_cfg) }
+		pub fn interp_start(&mut self) -> Token { self.token("${", TokenType::interpolation_start) }
+		pub fn interp_end(&mut self) -> Token { self.token("}", TokenType::interpolation_end) }
 		pub fn popen(&mut self) -> Token { self.token("(", TokenType::parenthesis_open) }
 		pub fn pclose(&mut self) -> Token { self.token(")", TokenType::parenthesis_close) }
 		pub fn bopen(&mut self) -> Token { self.token("{", TokenType::brace_open) }
@@ -591,13 +593,22 @@ pub mod test_utils {
 		pub fn le(&mut self) -> Token { self.token("<=", TokenType::operator_less_than_eq) }
 		pub fn add(&mut self) -> Token { self.token("+", TokenType::operator_add) }
 		pub fn minus(&mut self) -> Token { self.token("-", TokenType::operator_minus) }
+		pub fn flip(&mut self) -> Token { self.token("~", TokenType::operator_bitwise_flip) }
 		pub fn mult(&mut self) -> Token { self.token("*", TokenType::operator_multiply) }
 		pub fn div(&mut self) -> Token { self.token("/", TokenType::operator_divide) }
 		pub fn modulo(&mut self) -> Token { self.token("%", TokenType::operator_modulo) }
+		pub fn shl(&mut self) -> Token { self.token("<<", TokenType::operator_shift_left) }
+		pub fn shr(&mut self) -> Token { self.token(">>", TokenType::operator_shift_right) }
+		pub fn shru(&mut self) -> Token { self.token(">>>", TokenType::operator_shift_right) }
 		pub fn num(&mut self, number:&str) -> Token { self.token(number, TokenType::number) }
 		pub fn ident(&mut self, ident:impl Into<String>) -> Token { self.token(ident, TokenType::identifier) }
 		/// Adds the double quotes.
 		pub fn str(&mut self, ident:impl Into<String>) -> Token { self.token(format!("\"{}\"", ident.into()), TokenType::string) }
+		pub fn strf(&mut self, ident:impl Into<String>) -> Token { self.token(ident.into(), TokenType::string_fragment) }
+		/// Adds a starting double quote.
+		pub fn strf_start(&mut self, ident:impl Into<String>) -> Token { self.token(format!("\"{}", ident.into()), TokenType::string_fragment) }
+		/// Adds an ending double quote.
+		pub fn strf_end(&mut self, ident:impl Into<String>) -> Token { self.token(format!("{}\"", ident.into()), TokenType::string) }
 		/// Adds the backticks.
 		pub fn link(&mut self, ident:impl Into<String>) -> Token { self.token(format!("`{}`", ident.into()), TokenType::string) }
 	}
