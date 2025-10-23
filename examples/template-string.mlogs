@@ -1,1 +1,6 @@
-print("Hello, ${2 + "${a >> b}${"${/*aaa*/~x}"}" + 2} world")
+fn foo(a: string, x: num, y: num){
+  if(a != 1-2 - x&y /. 4){
+    print("Hello, ${a+"${x >> y}${"${/*aaa*/~y}"}"+a} world")
+    return bar(a,a)(x)()(y)
+  } else return `message`.maxHealth
+}
