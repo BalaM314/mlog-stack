@@ -74,18 +74,23 @@ pub fn compile_expr(
   use TokenType as TT;
   match expr {
     ASTExpression::Leaf(token) => {
-      let name = match output_name {
-        OutputName::Specified(n) => n,
-        OutputName::Any => ident_gen.next_ident(),
-        OutputName::None => return Ok((vec![], None)),
-      };
-      Ok((match token.variant {
-        TT::identifier => vec![format!("set {name} {}", token.text)],
-        TT::link => vec![format!("set {name} {}", &token.text[1..token.text.len()-1])],
-        TT::number => vec![format!("set {name} {}", token.text)],
-        TT::string => vec![format!("set {name} {}", token.text)],
-        _ => unreachable!()
-      }, Some(name)))
+      Ok(match output_name {
+        OutputName::Specified(name) => (match token.variant {
+          TT::identifier => vec![format!("set {name} {}", token.text)],
+          TT::link => vec![format!("set {name} {}", &token.text[1..token.text.len()-1])],
+          TT::number => vec![format!("set {name} {}", token.text)],
+          TT::string => vec![format!("set {name} {}", token.text)],
+          _ => unreachable!()
+        }, Some(name)),
+        OutputName::Any => (vec![], Some(match token.variant {
+          TT::identifier => token.text.to_string(),
+          TT::link => token.text[1..token.text.len()-1].to_string(),
+          TT::number => token.text.to_string(),
+          TT::string => token.text.to_string(),
+          _ => unreachable!()
+        })),
+        OutputName::None => (vec![], None),
+      })
     },
     ASTExpression::UnaryOperator { operator, operand } => {
       let name = match output_name {

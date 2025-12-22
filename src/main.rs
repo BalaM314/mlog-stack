@@ -26,7 +26,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 					match statements.first() {
 						Some(ASTNode { data: ASTNodeData::Statement(ASTStatement::Expression(expr)), .. }) => {
 							let mut ident_gen = IdentGenerator::new();
-							dbg!(compile_expr(expr, codegen::OutputName::Specified("foo".to_string()), &mut ident_gen));
+							let (code, _) = compile_expr(expr, codegen::OutputName::Specified("foo".to_string()), &mut ident_gen)?;
+							println!("{}", code.join("\n"));
 						},
 						_ => {}
 					}
