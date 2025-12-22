@@ -8,7 +8,7 @@ use crate::common::Span;
 pub type AST = ASTBlock;
 #[derive(PartialEq, Eq, Debug)]
 pub struct ASTNode {
-	data: ASTNodeData,
+	pub data: ASTNodeData,
 	span: Span,
 }
 
@@ -78,6 +78,7 @@ pub enum DeclarationType {
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum ASTExpression {
+	/// Token must have one of these types: identifier, link, number, string
 	Leaf(Token),
 	UnaryOperator {
 		operator: Token,
