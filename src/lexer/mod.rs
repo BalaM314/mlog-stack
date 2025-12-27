@@ -581,6 +581,7 @@ pub mod test_utils {
 		pub fn bopen(&mut self) -> Token { self.token("{", TokenType::brace_open) }
 		pub fn bclose(&mut self) -> Token { self.token("}", TokenType::brace_close) }
 		pub fn colon(&mut self) -> Token { self.token(":", TokenType::punctuation_colon) }
+		pub fn comma(&mut self) -> Token { self.token(",", TokenType::punctuation_comma) }
 		pub fn semicolon(&mut self) -> Token { self.token(";", TokenType::punctuation_semicolon) }
 		pub fn period(&mut self) -> Token { self.token(".", TokenType::operator_access) }
 		pub fn assign(&mut self) -> Token { self.token("=", TokenType::operator_assignment) }

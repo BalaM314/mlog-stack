@@ -301,10 +301,16 @@ fn operator_associative(operator:TokenType) -> Associative {
 }
 
 ///operator must be an operator
+fn operator_priority_gt_function_call(operator:TokenType) -> bool {
+	return operator == TokenType::operator_access;
+}
+
+///operator must be an operator
 fn operator_priority(operator:TokenType) -> u8 {
 	use TokenType as TT;
 	match operator {
 		TT::operator_access => 9,
+		//function call => 8.5
 		TT::operator_increment |
 		TT::operator_not |
 		TT::operator_bitwise_flip => 8,
@@ -362,6 +368,7 @@ fn get_leaf_node_or_paren_nodes(tokens:&mut Peekable<impl Iterator<Item = Token>
 	}
 }
 
+//TODO remove clone on TokenType, which is Copy
 fn insert_binary_operator(expr: ASTExpressionBuilder, operator: Token, right: ASTExpressionBuilder) -> ASTExpressionBuilder {
 	match expr {
 		ASTExpressionBuilder::Leaf(_) | ASTExpressionBuilder::TemplateString { .. } =>
@@ -392,8 +399,10 @@ fn insert_function_call(expr: ASTExpressionBuilder, arguments: Vec<ASTExpression
 			ASTExpressionBuilder::FunctionCall { function: Box::new(expr), arguments },
 		ASTExpressionBuilder::UnaryOperator { operator: unary, operand, .. } =>
 			ASTExpressionBuilder::UnaryOperator { operator: unary, operand: Box::new(insert_function_call(*operand, arguments)), is_paren: false },
-		ASTExpressionBuilder::BinaryOperator { left, operator: existing, right: left_right, .. } =>
-			ASTExpressionBuilder::BinaryOperator { left: left, operator: existing, right: Box::new(insert_function_call(*left_right, arguments)), is_paren: false },
+		ASTExpressionBuilder::BinaryOperator { is_paren, ref operator, .. } if is_paren || operator_priority_gt_function_call(operator.variant) =>
+			ASTExpressionBuilder::FunctionCall { function: Box::new(expr), arguments },
+		ASTExpressionBuilder::BinaryOperator { left, operator, right: left_right, .. } =>
+			ASTExpressionBuilder::BinaryOperator { left, operator, right: Box::new(insert_function_call(*left_right, arguments)), is_paren: false },
 	}
 }
 
@@ -994,6 +1003,86 @@ mod tests {
 			]),
 			n::root_expr(
 				e::unary(flip.clone(), e::ident("abc"))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_function_call_1(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("x"),
+				b.popen(),
+				b.num("3"),
+				b.pclose(),
+			]),
+			n::root_expr(
+				e::func(e::ident("x"), vec![e::num("3")])
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_function_call_2(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("x"),
+				b.popen(),
+				b.num("3"),
+				b.comma(),
+				b.num("4"),
+				b.pclose(),
+			]),
+			n::root_expr(
+				e::func(e::ident("x"), vec![e::num("3"), e::num("4")])
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_function_call_3(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.popen(),
+				// b.popen(),
+				b.ident("x"),
+				b.period(),
+				b.ident("y"),
+				// b.pclose(),
+				b.pclose(),
+				b.popen(),
+				// b.popen(),
+				b.num("3"),
+				b.comma(),
+				b.num("4"),
+				// b.pclose(),
+				b.pclose(),
+			]),
+			n::root_expr(
+				e::func(e::binary(e::ident("x"), b.period(), e::ident("y")), vec![e::num("3"), e::num("4")])
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_function_call_4(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.popen(),
+				// b.popen(),
+				b.ident("x"),
+				b.add(),
+				b.ident("y"),
+				// b.pclose(),
+				b.pclose(),
+				b.popen(),
+				// b.popen(),
+				b.num("3"),
+				// b.pclose(),
+				b.pclose(),
+			]),
+			n::root_expr(
+				e::func(e::binary(e::ident("x"), b.add(), e::ident("y")), vec![e::num("3")])
 			)
 		);
 	}
