@@ -111,6 +111,8 @@ pub enum TokenType {
 
 	parenthesis_open,
 	parenthesis_close,
+	bracket_open,
+	bracket_close,
 	brace_open,
 	brace_close,
 	punctuation_colon,
@@ -176,6 +178,8 @@ pub enum SubTokenType {
 
 	parenthesis_open,
 	parenthesis_close,
+	bracket_open,
+	bracket_close,
 	brace_open,
 	brace_close,
 	quote_double,
@@ -236,6 +240,8 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 			},
 			'(' => (1, ST::parenthesis_open),
 			')' => (1, ST::parenthesis_close),
+			'[' => (1, ST::bracket_open),
+			']' => (1, ST::bracket_close),
 			'{' => (1, ST::brace_open),
 			'}' => (1, ST::brace_close),
 			'\'' => (1, ST::quote_single),
@@ -440,6 +446,8 @@ pub fn lexer(input:&str) -> Result<Vec<Token>, CError> {
 
 			ST::parenthesis_open => TokenType::parenthesis_open,
 			ST::parenthesis_close => TokenType::parenthesis_close,
+			ST::bracket_open => TokenType::bracket_open,
+			ST::bracket_close => TokenType::bracket_close,
 			ST::brace_open => {
 				brace_nest_stack.push((BraceType::Unknown, st.span.clone()));
 				TokenType::brace_open
@@ -578,6 +586,8 @@ pub mod test_utils {
 		pub fn interp_end(&mut self) -> Token { self.token("}", TokenType::interpolation_end) }
 		pub fn popen(&mut self) -> Token { self.token("(", TokenType::parenthesis_open) }
 		pub fn pclose(&mut self) -> Token { self.token(")", TokenType::parenthesis_close) }
+		pub fn sopen(&mut self) -> Token { self.token("[", TokenType::bracket_open) }
+		pub fn sclose(&mut self) -> Token { self.token("]", TokenType::bracket_close) }
 		pub fn bopen(&mut self) -> Token { self.token("{", TokenType::brace_open) }
 		pub fn bclose(&mut self) -> Token { self.token("}", TokenType::brace_close) }
 		pub fn colon(&mut self) -> Token { self.token(":", TokenType::punctuation_colon) }
