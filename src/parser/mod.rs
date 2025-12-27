@@ -93,6 +93,10 @@ pub enum ASTExpression {
 		function: Box<ASTExpression>,
 		arguments: Vec<ASTExpression>,
 	},
+	ArrayAccess {
+		target: Box<ASTExpression>,
+		index: Box<ASTExpression>,
+	},
 	/// values.len() must always be 1 less than strings.len()
 	/// if the string is "", then strings must be vec![""] and values must be vec![]
 	/// if the initial string was "${0}", then strings must be vec!["",""] and values must be vec![0]
@@ -120,6 +124,10 @@ enum ASTExpressionBuilder {
 	FunctionCall {
 		function: Box<ASTExpressionBuilder>,
 		arguments: Vec<ASTExpressionBuilder>,
+	},
+	ArrayAccess {
+		target: Box<ASTExpressionBuilder>,
+		index: Box<ASTExpressionBuilder>,
 	},
 	/// values.len() must always be 1 less than strings.len()
 	/// if the string is "", then strings must be vec![""] and values must be vec![]
@@ -149,6 +157,8 @@ impl Into<ASTExpression> for ASTExpressionBuilder {
 				ASTExpression::BinaryOperator { left: Box::new((*left).into()), operator, right: Box::new((*right).into()) },
 			ASTExpressionBuilder::FunctionCall { function, arguments } =>
 				ASTExpression::FunctionCall { function: Box::new((*function).into()), arguments: arguments.into_iter().map(|n| n.into()).collect() },
+			ASTExpressionBuilder::ArrayAccess { target, index } =>
+				ASTExpression::ArrayAccess { target: Box::new((*target).into()), index: Box::new((*index).into()) },
 			ASTExpressionBuilder::TemplateString { strings, values } =>
 				ASTExpression::TemplateString { strings, values: values.into_iter().map(|n| n.into()).collect() },
 		}
@@ -223,6 +233,8 @@ impl Display for ASTExpression {
 			ASTExpression::BinaryOperator { left, operator, right } => write!(f, "({left} {operator} {right})"),
 			ASTExpression::FunctionCall { function, arguments } =>
 				write!(f, "{function}({})", arguments.iter().map(|a| format!("{a}")).join(", ")),
+			ASTExpression::ArrayAccess { target, index } =>
+				write!(f, "{target}[{index}]"),
 			ASTExpression::TemplateString { strings, values } => {
 				let mut values = values.iter();
 				for str in strings {
@@ -386,23 +398,38 @@ fn insert_binary_operator(expr: ASTExpressionBuilder, operator: Token, right: AS
 			ASTExpressionBuilder::BinaryOperator { left: Box::new(expr), operator, right: Box::new(right), is_paren: false },
 		ASTExpressionBuilder::BinaryOperator { left, operator: existing, right: left_right, .. } =>
 			ASTExpressionBuilder::BinaryOperator { left: left, operator: existing, right: Box::new(insert_binary_operator(*left_right, operator, right)), is_paren: false },
-		ASTExpressionBuilder::FunctionCall { .. } =>
+		ASTExpressionBuilder::FunctionCall { .. } | ASTExpressionBuilder::ArrayAccess { .. } =>
 			ASTExpressionBuilder::BinaryOperator { left: Box::new(expr), operator, right: Box::new(right), is_paren: false },
 	}
 }
 
 fn insert_function_call(expr: ASTExpressionBuilder, arguments: Vec<ASTExpressionBuilder>) -> ASTExpressionBuilder {
 	match expr {
-		ASTExpressionBuilder::Leaf(_) | ASTExpressionBuilder::FunctionCall { .. } | ASTExpressionBuilder::TemplateString { .. } =>
+		ASTExpressionBuilder::Leaf(_) | ASTExpressionBuilder::FunctionCall { .. } | ASTExpressionBuilder::ArrayAccess { .. } | ASTExpressionBuilder::TemplateString { .. } =>
 			ASTExpressionBuilder::FunctionCall { function: Box::new(expr), arguments },
 		ASTExpressionBuilder::UnaryOperator { is_paren, .. } | ASTExpressionBuilder::BinaryOperator { is_paren, .. } if is_paren =>
 			ASTExpressionBuilder::FunctionCall { function: Box::new(expr), arguments },
 		ASTExpressionBuilder::UnaryOperator { operator: unary, operand, .. } =>
 			ASTExpressionBuilder::UnaryOperator { operator: unary, operand: Box::new(insert_function_call(*operand, arguments)), is_paren: false },
-		ASTExpressionBuilder::BinaryOperator { is_paren, ref operator, .. } if is_paren || operator_priority_gt_function_call(operator.variant) =>
+		ASTExpressionBuilder::BinaryOperator { ref operator, .. } if operator_priority_gt_function_call(operator.variant) =>
 			ASTExpressionBuilder::FunctionCall { function: Box::new(expr), arguments },
 		ASTExpressionBuilder::BinaryOperator { left, operator, right: left_right, .. } =>
 			ASTExpressionBuilder::BinaryOperator { left, operator, right: Box::new(insert_function_call(*left_right, arguments)), is_paren: false },
+	}
+}
+
+fn insert_array_access(target: ASTExpressionBuilder, index: ASTExpressionBuilder) -> ASTExpressionBuilder {
+	match target {
+		ASTExpressionBuilder::Leaf(_) | ASTExpressionBuilder::FunctionCall { .. } | ASTExpressionBuilder::ArrayAccess { .. } | ASTExpressionBuilder::TemplateString { .. } =>
+			ASTExpressionBuilder::ArrayAccess { target: Box::new(target), index: Box::new(index) },
+		ASTExpressionBuilder::UnaryOperator { is_paren, .. } | ASTExpressionBuilder::BinaryOperator { is_paren, .. } if is_paren =>
+			ASTExpressionBuilder::ArrayAccess { target: Box::new(target), index: Box::new(index) },
+		ASTExpressionBuilder::UnaryOperator { operator: unary, operand, .. } =>
+			ASTExpressionBuilder::UnaryOperator { operator: unary, operand: Box::new(insert_array_access(*operand, index)), is_paren: false },
+		ASTExpressionBuilder::BinaryOperator { ref operator, .. } if operator_priority_gt_function_call(operator.variant) =>
+			ASTExpressionBuilder::ArrayAccess { target: Box::new(target), index: Box::new(index) },
+		ASTExpressionBuilder::BinaryOperator { left, operator, right: left_right, .. } =>
+			ASTExpressionBuilder::BinaryOperator { left, operator, right: Box::new(insert_array_access(*left_right, index)), is_paren: false },
 	}
 }
 
@@ -452,6 +479,17 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 						None => {
 							nest_level += 1;
 							tokens.next();
+						}
+					},
+					TT::bracket_open => match expr {
+						Some(e) => {
+							tokens.next(); //consume the [
+							let index = get_expression_inner(tokens, true)?;
+							require_type(tokens, TT::bracket_close)?;
+							expr = Some(insert_array_access(e, index));
+						},
+						None => {
+							return err!("Array literals are not yet implemented", next.span.clone())
 						}
 					},
 					TT::parenthesis_close => {
@@ -677,7 +715,7 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 	while let Some(tk) = tokens.peek() {
 		use TokenType as TT;
 		let statement: ASTNodeData = match tk.variant {
-			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::punctuation_colon | TT::punctuation_comma | TT::interpolation_start | TT::interpolation_end | TT::keyword_else =>
+			TT::brace_close | TT::brace_open | TT::parenthesis_close | TT::bracket_close | TT::punctuation_colon | TT::punctuation_comma | TT::interpolation_start | TT::interpolation_end | TT::keyword_else =>
 				return err!("Unexpected token", tk.span.clone()),
 			TT::operator_access |
 			TT::operator_exponentiate |
@@ -802,8 +840,7 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 				ASTNodeData::Block(ASTBlock::While { condition, statements })
 			},
 			TT::identifier | TT::link | TT::number | TT::string | TT::string_fragment |
-			TT::operator_minus | TT::operator_not | TT::operator_increment | TT::operator_bitwise_flip |
-			TT::parenthesis_open =>
+			TT::operator_minus | TT::operator_not | TT::operator_increment | TT::operator_bitwise_flip | TT::parenthesis_open | TT::bracket_open =>
 				ASTNodeData::Statement(ASTStatement::Expression(get_expression(&mut tokens)?)),
 		};
 		statements.push(ASTNode { data: statement, span: 0..0 });
@@ -828,6 +865,9 @@ pub mod test_utils {
 		}
 		pub fn func(function:ASTExpression, arguments: Vec<ASTExpression>) -> ASTExpression {
 			ASTExpression::FunctionCall { function: Box::new(function), arguments }
+		}
+		pub fn index(target:ASTExpression, index: ASTExpression) -> ASTExpression {
+			ASTExpression::ArrayAccess { target: Box::new(target), index: Box::new(index) }
 		}
 		pub fn template_string(strings:Vec<&str>, values: Vec<ASTExpression>) -> ASTExpression {
 			let last_i = strings.len() - 1;
@@ -1083,6 +1123,59 @@ mod tests {
 			]),
 			n::root_expr(
 				e::func(e::binary(e::ident("x"), b.add(), e::ident("y")), vec![e::num("3")])
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_array_access_1(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("x"),
+				b.sopen(),
+				b.ident("y"),
+				b.sclose(),
+			]),
+			n::root_expr(
+				e::index(e::ident("x"), e::ident("y"))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_array_access_2(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("x"),
+				b.period(),
+				b.ident("y"),
+				b.sopen(),
+				b.ident("z"),
+				b.sclose(),
+			]),
+			n::root_expr(
+				e::index(e::binary(e::ident("x"), b.period(), e::ident("y")), e::ident("z"))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_array_access_3(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("x"),
+				b.sopen(),
+				b.ident("y"),
+				b.sclose(),
+				b.sopen(),
+				b.ident("z"),
+				b.sclose(),
+				b.sopen(),
+				b.ident("aa"),
+				b.sclose(),
+			]),
+			n::root_expr(
+				e::index(e::index(e::index(e::ident("x"), e::ident("y")), e::ident("z")), e::ident("aa"))
 			)
 		);
 	}
