@@ -1,4 +1,4 @@
-use crate::{common::CError, lexer::TokenType, parser::{AST, ASTBlock, ASTExpression}};
+use crate::{common::CError, lexer::{Token, TokenType}, parser::{AST, ASTBlock, ASTExpression}};
 
 
 pub fn compile(program: AST) -> Result<String, CError> {
