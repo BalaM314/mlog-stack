@@ -449,6 +449,7 @@ fn get_expression_inner(tokens:&mut Peekable<impl Iterator<Item = Token>>, allow
 						nest_level -= 1;
 						if nest_level < 0 { break }
 						tokens.next();
+						if let Some(expr) = &mut expr { expr.set_paren() }
 					}
 					TT::operator_minus if expr.is_none() => {
 						let operator = tokens.next().unwrap();
@@ -932,6 +933,40 @@ mod tests {
 			]),
 			n::root_expr(
 				e::binary(e::ident("x"), b.token("*=", TokenType::operator_assignment_multiply), e::num("3"))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_binary_multiple(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.ident("x"),
+				b.add(),
+				b.ident("y"),
+				b.div(),
+				b.ident("z"),
+			]),
+			n::root_expr(
+				e::binary(e::ident("x"), b.add(), e::binary(e::ident("y"), b.div(), e::ident("z")))
+			)
+		);
+	}
+	#[test]
+	fn parse_expr_binary_multiple_paren(){
+		let mut b = TokenBuilder::new();
+		assert_eq!(
+			parse(vec![
+				b.popen(),
+				b.ident("x"),
+				b.add(),
+				b.ident("y"),
+				b.pclose(),
+				b.div(),
+				b.ident("z"),
+			]),
+			n::root_expr(
+				e::binary(e::binary(e::ident("x"), b.add(), e::ident("y")), b.div(), e::ident("z"))
 			)
 		);
 	}
