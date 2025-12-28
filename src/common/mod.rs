@@ -16,6 +16,12 @@ fn get_line_span(text:&str, span:&Span) -> Span {
   length_before..length_before + span.end - span.start
 }
 
+pub fn camel_to_kebab(text:&str) -> String {
+  text.chars().map(|c|
+    if c.is_ascii_uppercase() {format!("-{}", c.to_ascii_lowercase())} else { c.to_string() }
+  ).collect::<String>()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct CError {
   message: String,

@@ -1,4 +1,4 @@
-use crate::{common::CError, lexer::{Token, TokenType}, parser::{AST, ASTBlock, ASTExpression}};
+use crate::{common::{CError, camel_to_kebab}, err, lexer::{Token, TokenType}, parser::{AST, ASTBlock, ASTExpression}};
 
 
 pub fn compile(program: AST) -> Result<String, CError> {
@@ -27,6 +27,43 @@ pub enum OutputName {
   Specified(String),
   Any,
   None
+}
+
+fn is_namespace_containing_values(left:&str) -> bool {
+  return matches!(
+    left,
+    "Blocks" | "Liquids" | "Items" | "Units" | "Teams" | "Sounds"
+  );
+}
+
+/// left must be a valid value namespace
+fn compile_namespace_value_access(left:&str, right:&str) -> String {
+  match left {
+    "Blocks" => match right {
+      //ANUKEEEEEEEEEEEEEEEEEE
+      "itemBridge" => "bridge-conveyor".to_string(),
+      "airblastDrill" => "blast-drill".to_string(),
+      "switchBlock" => "switch".to_string(),
+      "largeSolarPanel" => "solar-panel-large".to_string(),
+      "logicDisplayTile" => "tiled-logic-display".to_string(),
+      _ =>
+        // Making sure the building name is valid is handled by type checking
+        format!("@{}", camel_to_kebab(right))
+    },
+    "Liquids" => format!("@{}", right),
+    "Items" => format!("@{}", camel_to_kebab(right)),
+    "Units" => format!("@{}", camel_to_kebab(right)),
+    "Teams" => format!("@{}", right),
+    "Sounds" => format!("@sfx-{}", camel_to_kebab(right)),
+    _ => panic!("compile_namespace_value_access: Invalid namespace"),
+  }
+}
+
+fn is_namespace_containing_functions(left:&str) -> bool {
+  return matches!(
+    left,
+    "draw" | "control" | "ucontrol" | "ulocate"
+  );
 }
 
 fn compile_operator(operator:TokenType) -> &'static str {
@@ -110,6 +147,18 @@ pub fn compile_expr(
       Ok((code, Some(name)))
     },
     ASTExpression::BinaryOperator { left, operator, right } => {
+      //this is ugly but there is no better way until https://github.com/rust-lang/rust/issues/87121 or https://github.com/rust-lang/rust/issues/51114
+      if operator.variant == TT::operator_access {
+        if let ASTExpression::Leaf(left) = &**left {
+          if let ASTExpression::Leaf(right) = &**right {
+            if is_namespace_containing_functions(&left.text[..]) {
+              return err!("Namespace access is invalid in this position: expected a value, not a function", left.span.start..right.span.end);
+            } else if is_namespace_containing_values(&left.text[..]) {
+              return Ok((vec![], Some(compile_namespace_value_access(&left.text, &right.text))))
+            }
+          }
+        }
+      }
       let name = match output_name {
         OutputName::Specified(n) => n,
         OutputName::Any => ident_gen.next_ident(),
@@ -171,6 +220,8 @@ pub fn compile_expr(
       code1.push(format!("sensor {name} {inter_target} {inter_index}"));
       Ok((code1, Some(name)))
     },
-    ASTExpression::TemplateString { strings, values } => todo!(),
+    ASTExpression::TemplateString { strings, .. } => {
+      return err!("MLOG does not support string concatenation", strings.first().unwrap().span.clone());
+    },
   }
 }
