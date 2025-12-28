@@ -519,8 +519,8 @@ pub fn compile_expr(
           "write" | "print" | "printchar" | "drawflush" | "printflush" | "wait" | "stop" | "end" | "ubind" => {
             let (mut code, inters) = compile_arguments(arguments, ident_gen)?;
             code.push(match &text[..] {
-              "write" => format!("write {} {} {}", inters[3], inters[1], inters[2]),
-              "print" | "printchar" | "drawflush" | "printflush" | "wait" | "ubind" => format!("{text} {}", inters[1]),
+              "write" => format!("write {} {} {}", inters[2], inters[0], inters[1]),
+              "print" | "printchar" | "drawflush" | "printflush" | "wait" | "ubind" => format!("{text} {}", inters[0]),
               "stop" | "end" => format!("{text}"),
               _ => unreachable!(),
             });

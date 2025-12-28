@@ -746,7 +746,13 @@ fn parse_statements(tokens: Vec<Token>) -> Result<Vec<ASTNode>, CError> {
 			TT::operator_assignment_subtract |
 			TT::operator_assignment_multiply |
 			TT::operator_assignment_divide => return err!("Unexpected binary operator with no preceding expression", tk.span.clone()),
-			TT::punctuation_semicolon => return err!("Duplicate or unnecessary semicolon", tk.span.clone()),
+			TT::punctuation_semicolon => {
+				tokens.next();
+				if let Some(Token { variant: TT::punctuation_semicolon, span, .. }) = tokens.peek() {
+					return err!("Duplicate or unnecessary semicolon", span.clone());
+				}
+				continue
+			}
 
 			TT::newline => {tokens.next(); continue},
 
