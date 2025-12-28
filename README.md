@@ -10,5 +10,5 @@ Work in progress.
 
 * Lexer: done
 * Parser: done
-* Codegen: ???
-* Optimization: ?????
+* Codegen: working, except for functions
+* Optimization: not yet started, but the codegen does some things that could be considered optimizations
