@@ -20,8 +20,8 @@ loop {
   ucontrol.boost(true)
 
   if(@unit.health < minHealth){
-    val target = ulocate.building.repair()
-    if(!target || target.powerNetIn > minPower) target = ulocate.building.core()
+    val target = ulocate.building(repair, false)
+    if(!target || target.powerNetIn > minPower) target = ulocate.building(core, false)
     ucontrol.approach(target.x, target.y, repairApproachDistance)
     continue
   }
@@ -30,13 +30,13 @@ loop {
     @unit.totalItems >= returnItemCount ||
     (!mining && @unit.firstItem != null && @unit.firstItem != targetOre)
   ){
-    val core = ulocate.building.core()
-    ucontrol.move(core.x, core.y)
+    val core = ulocate.building(core, false)
+    ucontrol.move(core@x, core@y)
     ucontrol.itemDrop(core, 1e10)
     continue
   }
 
   val ore = ulocate.ore(targetOre)
-  ucontrol.approach(ore.x, ore.y, approachDistance)
-  ucontrol.mine(ore.x, ore.y)
+  ucontrol.approach(ore@x, ore@y, approachDistance)
+  ucontrol.mine(ore@x, ore@y)
 }

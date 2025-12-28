@@ -1,0 +1,30 @@
+
+val limit = 512
+val cell = `bank1`
+
+var primeCount = 0
+
+// Initialise array
+for(var n = 2; n <= limit; ++ n){
+	write(cell, n, 1)
+}
+
+for(var n = 2; n <= limit; ++ n){
+	if(read(cell, n)){
+		// Print n if it is prime
+		print(n)
+    print(" ")
+		++ primeCount
+		
+		// Then mark all its multiples as not prime
+		for(var i = n; i <= limit; i += n){
+			write(cell, i, 0)
+    }
+  }
+}
+
+print("\n")
+print(primeCount)
+print(" primes")
+printflush(`message1`)
+
