@@ -185,24 +185,60 @@ pub fn compile_expr(
           }
         }
       }
-      let name = match output_name {
-        OutputName::Specified(n) => n,
-        OutputName::Any => ident_gen.next_ident(),
-        OutputName::None => {
-          let (mut code1, _) = compile_expr(left, OutputName::None, ident_gen)?;
-          let (code2, _) = compile_expr(right, OutputName::None, ident_gen)?;
-          code1.extend(code2.into_iter());
-          return Ok((code1, None));
-        },
-      };
-      let (mut code1, inter_left) = compile_expr_to_any(left, ident_gen)?;
       match operator.variant {
         TT::operator_assignment |
         TT::operator_assignment_add |
         TT::operator_assignment_subtract |
         TT::operator_assignment_multiply |
-        TT::operator_assignment_divide => panic!("not yet implemented"),
+        TT::operator_assignment_divide => {
+          let left = match &**left {
+            ASTExpression::Leaf(Token { text: left, variant: TT::identifier, .. }) => left,
+            _ => return err!("Invalid assignment operation: cannot assign to anything other than an identifier", operator.span.clone()),
+          };
+          match operator.variant {
+            TT::operator_assignment => {
+              let (mut code, inter_right) = compile_expr(right, OutputName::Specified(left.clone()), ident_gen)?;
+              match output_name {
+                OutputName::Specified(n) => {
+                  let inter_right = inter_right.unwrap();
+                  code.push(format!("set {n} {inter_right}"));
+                  Ok((code, Some(inter_right)))
+                },
+                OutputName::Any => Ok((code, inter_right)),
+                OutputName::None => Ok((code, None)),
+              }
+            },
+            _ => {
+              let (mut code, inter_right) = compile_expr_to_any(right, ident_gen)?;
+              let name = match output_name {
+                OutputName::Specified(n) => n,
+                OutputName::Any => ident_gen.next_ident(),
+                OutputName::None => return Ok((code, None)),
+              };
+              let operation = match operator.variant {
+                TT::operator_assignment_add => "add",
+                TT::operator_assignment_subtract => "sub",
+                TT::operator_assignment_multiply => "mul",
+                TT::operator_assignment_divide => "div",
+                _ => unreachable!(),
+              };
+              code.push(format!("op {operation} {name} {left} {inter_right}"));
+              Ok((code, Some(name)))
+            }
+          }
+        },
         TT::operator_access => {
+          let name = match output_name {
+            OutputName::Specified(n) => n,
+            OutputName::Any => ident_gen.next_ident(),
+            OutputName::None => {
+              let (mut code1, _) = compile_expr(left, OutputName::None, ident_gen)?;
+              let (code2, _) = compile_expr(right, OutputName::None, ident_gen)?;
+              code1.extend(code2.into_iter());
+              return Ok((code1, None));
+            },
+          };
+          let (mut code1, inter_left) = compile_expr_to_any(left, ident_gen)?;
           match &**right {
             ASTExpression::Leaf(Token { variant: TT::identifier, text, span }) => {
               if is_senseable(text) {
@@ -216,6 +252,17 @@ pub fn compile_expr(
           }
         },
         _ => {
+          let name = match output_name {
+            OutputName::Specified(n) => n,
+            OutputName::Any => ident_gen.next_ident(),
+            OutputName::None => {
+              let (mut code1, _) = compile_expr(left, OutputName::None, ident_gen)?;
+              let (code2, _) = compile_expr(right, OutputName::None, ident_gen)?;
+              code1.extend(code2.into_iter());
+              return Ok((code1, None));
+            },
+          };
+          let (mut code1, inter_left) = compile_expr_to_any(left, ident_gen)?;
           let (code2, inter_right) = compile_expr_to_any(right, ident_gen)?;
           code1.extend(code2.into_iter());
           code1.push(format!("op {} {name} {inter_left} {inter_right}", compile_operator(operator.variant)));
