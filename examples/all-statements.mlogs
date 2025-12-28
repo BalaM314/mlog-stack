@@ -20,7 +20,7 @@ control.shootp(`spectre1`, unit, true)
 control.config(`sorter1`, Items.copper)
 control.color(`illuminator1`, 0xFF, 0x00, 0xFF)
 enemy = radar(`hail1`, enemy, flying, guardian, max, maxHealth)
-enemy = radar(`hail1`, enemy, 1, maxHealth)
+enemy = radar(`hail1`, any, 1, maxHealth)
 //all the different `op`s
 //put them under Math or leave them as global functions?
 x = select(y > 5, 10, -1)

@@ -191,7 +191,7 @@ pub fn compile_expr(
         OutputName::None => {
           let (mut code1, _) = compile_expr(left, OutputName::None, ident_gen)?;
           let (code2, _) = compile_expr(right, OutputName::None, ident_gen)?;
-          code1.extend_from_slice(&code2);
+          code1.extend(code2.into_iter());
           return Ok((code1, None));
         },
       };
@@ -217,14 +217,139 @@ pub fn compile_expr(
         },
         _ => {
           let (code2, inter_right) = compile_expr_to_any(right, ident_gen)?;
-          code1.extend_from_slice(&code2);
+          code1.extend(code2.into_iter());
           code1.push(format!("op {} {name} {inter_left} {inter_right}", compile_operator(operator.variant)));
           Ok((code1, Some(name)))
         }
       }
     },
     ASTExpression::FunctionCall { function, arguments } => match &**function {
-      ASTExpression::Leaf(Token { text, variant, .. }) if *variant == TT::identifier => todo!(),
+      ASTExpression::Leaf(Token { text, variant, span }) if *variant == TT::identifier => {
+        //Validate argument count
+        'check_arg_count: {
+          let count = match &text[..] {
+            "read" => 2,
+            "write" => 3,
+            "print" => 1,
+            "printchar" => 1,
+            "drawflush" => 1,
+            "printflush" => 1,
+            "getlink" => 1,
+            "select" => 0,
+            "packColor" => 0,
+            "wait" => 0,
+            "stop" => 0,
+            "end" => 0,
+            "ubind" => 0,
+            "radar" => {
+              if !(4 <= arguments.len() && arguments.len() <= 6) {
+                return err!(format!("Incorrect number of arguments for \"{text}\": expected 4 to 6 arguments"), span.clone());
+              }
+              break 'check_arg_count;
+            },
+            "uradar" => {
+              if !(3 <= arguments.len() && arguments.len() <= 5) {
+                return err!(format!("Incorrect number of arguments for \"{text}\": expected 3 to 5 arguments"), span.clone());
+              }
+              break 'check_arg_count;
+            },
+            _ => break 'check_arg_count,
+          };
+          if arguments.len() != count {
+            return err!(format!("Incorrect number of arguments for \"{text}\": expected {count} arguments"), span.clone());
+          }
+        }
+        match &text[..] {
+          //Instructions that output a value
+          "read" | "getlink" | "radar" | "uradar" | "select" | "packColor" => {
+            let name = match output_name {
+              OutputName::Specified(n) => n,
+              OutputName::Any => ident_gen.next_ident(),
+              OutputName::None => return Ok((
+                //this is quite cursed, I hope the compiler fixes it
+                match &text[..] {
+                  "radar" => match &arguments[arguments.len() - 2] {
+                    ASTExpression::Leaf(_) => vec![&arguments[0]],
+                    expr => vec![&arguments[0], expr],
+                  },
+                  "uradar" => match &arguments[arguments.len() - 2] {
+                    ASTExpression::Leaf(_) => vec![],
+                    expr => vec![expr],
+                  },
+                  _ => arguments.iter().collect(), //iter().collect().iter(), truly one of the programming languages of all time
+                }
+                  .iter()
+                  .map(|a| compile_expr(a, OutputName::None, ident_gen).map(|c| c.0))
+                  .collect::<Result<Vec<Vec<String>>, _>>()?.into_iter().flatten().collect(),
+                None
+              )),
+            };
+            Ok((match &text[..] {
+              "read" => {
+                let (mut code, build) = compile_expr_to_any(&arguments[0], ident_gen)?;
+                let (code_for_idx, idx) = compile_expr_to_any(&arguments[1], ident_gen)?;
+                code.extend(code_for_idx.into_iter());
+                code.push(format!("read {name} {build} {idx}"));
+                code
+              },
+              "getlink" => {
+                let (mut code, idx) = compile_expr_to_any(&arguments[0], ident_gen)?;
+                code.push(format!("getlink {name} {idx}"));
+                code
+              },
+              "packColor" => {
+                let (mut code, inter_names) = compile_arguments(arguments, ident_gen)?;
+                code.push(format!("packcolor {name} {}", inter_names.join(" ")));
+                code
+              },
+              "select" => {
+                let (mut code, inter_names) = compile_arguments(arguments, ident_gen)?;
+                let condition = &inter_names[0];
+                code.push(format!("select {name} equal {condition} true {}", inter_names[1..].join(" ")));
+                code
+              },
+              "radar" | "uradar" => {
+                let (mut code, build) = match &text[..] {
+                  "radar" => compile_expr_to_any(&arguments[0], ident_gen)?,
+                  //https://github.com/BalaM314/mlogx/commit/8be99195fa24e42c7efc93d1037c395c3d6eea1f#diff-9742f85fc82918c1d1fe63a9574014e0262b46b9a01738925bab57eea94ba3eeL372
+                  //"Today I learned that the default signature of uradar has a random 0 that doesn't mean anything." -BalaM314, 2022 (working on mlogx)
+                  //that zero makes my code simpler now instead of more complicated
+                  _uradar => (vec![], "0".to_string())
+                };
+                let conditions = arguments[1..arguments.len() - 2].iter().map(|c| match c {
+                  ASTExpression::Leaf(Token { text, variant: TT::identifier, .. }) => Ok(&text[..]),
+                  _ => err!("Invalid radar instruction: expected a (radar target class) keyword", span.clone()),
+                }).collect::<Result<Vec<_>, _>>()?.join(" ");
+                let sort_criteria = match arguments.last().unwrap() {
+                  ASTExpression::Leaf(Token { text, variant: TT::identifier, .. }) => &text[..],
+                  _ => return err!("Invalid radar instruction: expected a (unit sort criteria) keyword", span.clone()),
+                };
+                if !matches!(sort_criteria, "distance" | "health" | "shield" | "armor" | "maxHealth") {
+                  return err!("Invalid (unit sort criteria) keyword: valid options are: distance, health, shield, armor, maxHealth", span.clone());
+                }
+                let sort_order = match &arguments[arguments.len() - 2] {
+                  ASTExpression::Leaf(Token { text, variant: TT::identifier, .. }) => match &text[..] {
+                    "max" | "min" => if (&text[..] == "max") == (sort_criteria == "distance") { "false" } else { "true" }.to_string(),
+                    _ => return err!("Invalid radar instruction: expected a boolean or a (sort order) keyword", span.clone()),
+                  },
+                  expr => {
+                    let (code_for_sort_order, sort_order) = compile_expr_to_any(expr, ident_gen)?;
+                    code.extend(code_for_sort_order.into_iter());
+                    sort_order
+                  }
+                };
+                code.push(format!("{text} {conditions} {sort_criteria} {build} {sort_order} {name}"));
+                code
+              },
+              _ => unreachable!(),
+            }, Some(name)))
+          },
+          "write" | "print" | "printchar" | "drawflush" | "printflush" | "wait" | "stop" | "end" | "ubind" => {
+            todo!();
+          },
+          func => return err!(format!("Unknown function {func}\nhelp: custom functions are not yet implemented"), span.clone()), //TODO
+        }
+      },
       ASTExpression::BinaryOperator { left, operator, right } if operator.variant == TT::operator_access =>
         match (&**left, &**right) {
           (
@@ -407,7 +532,7 @@ pub fn compile_expr(
           }
           let (code_for_target, _) = compile_expr(target, OutputName::None, ident_gen)?;
           let mut code = code_for_target;
-          code.extend_from_slice(&code_for_index);
+          code.extend(code_for_index.into_iter());
           return Ok((code, None));
         },
       };
@@ -424,7 +549,7 @@ pub fn compile_expr(
       let (code_for_target, Some(inter_target)) =
         compile_expr(target, OutputName::Any, ident_gen)? else { unreachable!() };
       let mut code = code_for_target;
-      code.extend_from_slice(&code_for_index);
+      code.extend(code_for_index.into_iter());
       code.push(format!("sensor {name} {inter_target} {inter_index}"));
       Ok((code, Some(name)))
     },
