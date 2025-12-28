@@ -9,7 +9,7 @@ pub type AST = ASTBlock;
 #[derive(PartialEq, Eq, Debug)]
 pub struct ASTNode {
 	pub data: ASTNodeData,
-	span: Span,
+	pub span: Span,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -39,6 +39,7 @@ pub enum ASTBlock {
 		increment: Option<ASTStatement>,
 		statements: Vec<ASTNode>,
 	},
+	//TODO add do_while, it's significantly more efficient
 	While {
 		condition: ASTExpression,
 		statements: Vec<ASTNode>,
@@ -56,10 +57,10 @@ pub enum ASTBlock {
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct Declaration {
-	binding: DeclarationType,
-	identifier: Token,
-	typ: Option<ASTType>,
-	value: ASTExpression,
+	pub binding: DeclarationType,
+	pub identifier: Token,
+	pub typ: Option<ASTType>,
+	pub value: ASTExpression,
 }
 
 #[derive(PartialEq, Eq, Debug)]

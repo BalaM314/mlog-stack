@@ -1,13 +1,127 @@
-use crate::{common::{CError, camel_to_kebab}, err, lexer::{Token, TokenType}, parser::{AST, ASTBlock, ASTExpression}};
-
+use crate::{common::{CError, camel_to_kebab}, err, err_, lexer::{Token, TokenType}, parser::{AST, ASTBlock, ASTExpression, ASTNode, ASTNodeData, ASTStatement, Declaration}};
 
 pub fn compile(program: AST) -> Result<String, CError> {
   match program {
-    ASTBlock::Root { statements } => {
-      todo!()
-    },
+    ASTBlock::Root { statements } =>
+      Ok(compile_nodes(statements, &mut IdentGenerator::new(), &CompileContext::default())?.join("\n")),
     _ => panic!("program must be of type Root"),
   }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompileContext {
+  break_target: Option<String>,
+  continue_target: Option<String>,
+}
+
+fn compile_nodes(nodes: Vec<ASTNode>, ident_gen: &mut IdentGenerator, ctx: &CompileContext) -> Result<Vec<String>, CError> {
+  Ok(nodes.into_iter()
+    .map(|n| compile_node(n, ident_gen, ctx))
+    .collect::<Result<Vec<_>, _>>()?
+    .into_iter().flatten().collect())
+}
+
+fn compile_declaration(Declaration { identifier, value, .. }: Declaration, ident_gen: &mut IdentGenerator) -> Result<Vec<String>, CError> {
+  Ok(compile_expr(&value, OutputName::Specified(identifier.text), ident_gen)?.0)
+}
+
+fn compile_node(node: ASTNode, ident_gen: &mut IdentGenerator, ctx: &CompileContext) -> Result<Vec<String>, CError> {
+  Ok(match node.data {
+    ASTNodeData::Statement(statement) => match statement {
+      ASTStatement::Expression(expr) => compile_expr(&expr, OutputName::None, ident_gen)?.0,
+      ASTStatement::Declaration(declaration) => compile_declaration(declaration, ident_gen)?,
+      ASTStatement::Break => vec![format!("jump {}", ctx.break_target.as_ref().ok_or(err_!("No loop to break", node.span))?)],
+      ASTStatement::Continue => vec![format!("jump {}", ctx.continue_target.as_ref().ok_or(err_!("No loop to continue", node.span))?)],
+      ASTStatement::Return(expr) => {
+        // compile_expr_to_any(&expr, ident_gen)?.0;
+        return err!("Return is not yet implemented", node.span); //TODO
+      },
+    },
+    ASTNodeData::Block(block) => match block {
+      //TODO optimize the condition handling, lots of unnecessary jumps
+      ASTBlock::If { condition, statements, else_statements } if !else_statements.is_empty() => {
+        let main_block_label = ident_gen.next_ident();
+        let end_label = ident_gen.next_ident();
+        let (mut code, condition) = compile_expr_to_any(&condition, ident_gen)?;
+        code.push(format!("jump {main_block_label} equal {condition} true"));
+        code.extend(compile_nodes(else_statements, ident_gen, ctx)?.into_iter());
+        code.push(format!("jump {end_label} always 0"));
+        code.push(format!("{main_block_label}:"));
+        code.extend(compile_nodes(statements, ident_gen, ctx)?.into_iter());
+        code.push(format!("{end_label}:"));
+        code
+      },
+      ASTBlock::If { condition, statements, .. } => {
+        let end_label = ident_gen.next_ident();
+        let (mut code, condition) = compile_expr_to_any(&condition, ident_gen)?;
+        code.push(format!("jump {end_label} equal {condition} false"));
+        code.extend(compile_nodes(statements, ident_gen, ctx)?.into_iter());
+        code.push(format!("{end_label}:"));
+        code
+      },
+      ASTBlock::Loop { statements } if statements.is_empty() => vec!["stop".to_string()],
+      ASTBlock::Loop { statements } => {
+        let loop_label = ident_gen.next_ident();
+        let end_label = ident_gen.next_ident();
+        let mut code = vec![
+          format!("{loop_label}:")
+        ];
+        code.extend(compile_nodes(statements, ident_gen, &CompileContext {
+          continue_target: Some(loop_label.clone()),
+          break_target: Some(end_label.clone()),
+        })?.into_iter());
+        code.push(format!("jump {loop_label} always 0"));
+        code.push(format!("{end_label}:"));
+        code
+      },
+      ASTBlock::While { condition, statements } => {
+        let mut code = vec![];
+        let loop_start_label = ident_gen.next_ident();
+        let before_condition_label = ident_gen.next_ident();
+        let end_label = ident_gen.next_ident();
+        //the condition must be checked before each loop iteration
+        //but this would require a useless `jump always` on each loop iteration
+        //instead, put the useless `jump always` before the loop, so it only runs once
+        code.push(format!("jump {before_condition_label} always 0"));
+        code.push(format!("{loop_start_label}:"));
+        code.extend(compile_nodes(statements, ident_gen, &CompileContext {
+          continue_target: Some(before_condition_label.clone()),
+          break_target: Some(end_label.clone()),
+        })?.into_iter());
+        let (code_for_condition, condition) = compile_expr_to_any(&condition, ident_gen)?;
+        code.extend(code_for_condition.into_iter());
+        code.push(format!("jump {loop_start_label} equal {condition} true"));
+        code.push(format!("{end_label}:"));
+        code
+      },
+      ASTBlock::For { declaration, condition, increment, statements } => {
+        let mut code = compile_declaration(declaration, ident_gen)?;
+        let loop_start_label = ident_gen.next_ident();
+        let before_condition_label = ident_gen.next_ident();
+        let end_label = ident_gen.next_ident();
+        //the condition must be checked before each loop iteration
+        //but this would require a useless `jump always` on each loop iteration
+        //instead, put the useless `jump always` before the loop, so it only runs once
+        code.push(format!("jump {before_condition_label} always 0"));
+        code.push(format!("{loop_start_label}:"));
+        code.extend(compile_nodes(statements, ident_gen, &CompileContext {
+          continue_target: Some(before_condition_label.clone()),
+          break_target: Some(end_label.clone()),
+        })?.into_iter());
+        if let Some(increment) = increment {
+          //TODO fix this span issue
+          code.extend(compile_node(ASTNode { data: ASTNodeData::Statement(increment), span: 0..0 }, ident_gen, ctx)?.into_iter());
+        }
+        let (code_for_condition, condition) = compile_expr_to_any(&condition, ident_gen)?;
+        code.extend(code_for_condition.into_iter());
+        code.push(format!("jump {loop_start_label} equal {condition} true"));
+        code.push(format!("{end_label}:"));
+        code
+      },
+      ASTBlock::Function { .. } => vec![], //no codegen for functions
+      ASTBlock::Root { .. } => panic!("Invalid block: AST nodes cannot contain a root node"),
+    },
+  })
 }
 
 pub struct IdentGenerator {
@@ -112,7 +226,7 @@ fn compile_operator(operator:TokenType) -> &'static str {
     TT::operator_increment |
     TT::operator_not |
     TT::operator_bitwise_flip |
-    TT::operator_access => panic!("Operator {operator:?} cannot be compiled to a LogicOp name"),
+    TT::operator_access => panic!("compile_operator: Operator {operator:?} cannot be compiled to a LogicOp name"),
     _ => unreachable!(),
   }
 }
@@ -560,7 +674,7 @@ pub fn compile_expr(
                 },
                 "building" => {
                   let ASTExpression::Leaf(Token { text: group, variant: TT::identifier, .. }) = &arguments[0] else {
-                    return err!("Expected a keyword", rspan.clone()); //TODO wrong span
+                    return err!("Expected a keyword", None);
                   };
                   let (mut code, enemy) = match &arguments[1] {
                     ASTExpression::Leaf(Token { text, variant: TT::identifier, .. }) if matches!(&text[..], "enemy" | "ally") =>
@@ -599,7 +713,7 @@ pub fn compile_expr(
             },
             _ => err!(format!("Invalid function call: unknown namespace {left}"), lspan.clone())
           },
-          _ => err!("Invalid function call: invalid access expression", 0..0)
+          _ => err!("Invalid function call: invalid access expression", None)
         }
       ASTExpression::FunctionCall { .. } |
       ASTExpression::ArrayAccess { .. } |
@@ -608,7 +722,7 @@ pub fn compile_expr(
       ASTExpression::TemplateString { .. } |
       ASTExpression::BinaryOperator { .. } |
       ASTExpression::Leaf(_) =>
-        err!("Invalid function call: invalid function expression", 0..0), //TODO fix all the ranges, i need a range in ASTExpression
+        err!("Invalid function call: invalid function expression", None), //TODO fix all the ranges, i need a range in ASTExpression
     },
     ASTExpression::ArrayAccess { target, index } => {
       let name = match output_name {
