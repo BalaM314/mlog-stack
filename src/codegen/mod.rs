@@ -117,6 +117,13 @@ fn compile_operator(operator:TokenType) -> &'static str {
   }
 }
 
+fn compile_arguments(arguments: &Vec<ASTExpression>, ident_gen: &mut IdentGenerator) -> Result<(Vec<String>, Vec<String>), CError> {
+  let (code, names) = arguments.iter().map(|a|
+    compile_expr_to_any(a, ident_gen)
+  ).collect::<Result<Vec<_>, _>>()?.into_iter().unzip::<_, _, Vec<_>, Vec<String>>();
+  Ok((code.into_iter().flatten().collect::<Vec<_>>(), names))
+}
+
 pub fn compile_expr_to_any(
   expr: &ASTExpression, ident_gen: &mut IdentGenerator
 ) -> Result<(Vec<String>, String), CError> {
@@ -216,7 +223,176 @@ pub fn compile_expr(
         }
       }
     },
-    ASTExpression::FunctionCall { function, arguments } => todo!(),
+    ASTExpression::FunctionCall { function, arguments } => match &**function {
+      ASTExpression::Leaf(Token { text, variant, .. }) if *variant == TT::identifier => todo!(),
+      ASTExpression::BinaryOperator { left, operator, right } if operator.variant == TT::operator_access =>
+        match (&**left, &**right) {
+          (
+            ASTExpression::Leaf(Token { text: left, variant: TT::identifier, span: lspan }),
+            ASTExpression::Leaf(Token { text: right, variant: TT::identifier, span: rspan })
+          ) => match &left[..] {
+            "draw" => {
+              let arg_count = match &right[..] {
+                "clear" => 3,
+                "color" => 4,
+                "col" => 1,
+                "stroke" => 1,
+                "line" => 4,
+                "rect" | "lineRect" => 4,
+                "poly" | "linePoly" => 5,
+                "triangle" => 6,
+                "image" => 5,
+                "print" => 3,
+                "translate" | "scale" => 2,
+                "rotate" => 1,
+                _ => return err!("Unknown draw command", rspan.clone()),
+              };
+              if arguments.len() != arg_count {
+                return err!(format!("Incorrect number of arguments for \"draw.{right}\": expected {arg_count} arguments"), rspan.clone());
+              }
+              let (mut code, inter_names) = compile_arguments(arguments, ident_gen)?;
+              let args = inter_names.join(" ");
+              if right == "rotate" {
+                code.push(format!("draw {right} 0 0 {args}"));
+              } else {
+                code.push(format!("draw {right} {args}"));
+              }
+              Ok((code, Some("null".to_string())))
+            },
+            "control" => {
+              let arg_count = match &right[..] {
+                "enabled" => 2,
+                "shoot" => 4,
+                "shootp" => 3,
+                "config" => 2,
+                "color" => 4,
+                _ => return err!("Unknown control command", rspan.clone()),
+              };
+              if arguments.len() != arg_count {
+                return err!(format!("Incorrect number of arguments for \"control.{right}\": expected {arg_count} arguments"), rspan.clone());
+              }
+              let (mut code, inter_names) = compile_arguments(arguments, ident_gen)?;
+              code.push(format!("control {right} {}", inter_names.join(" ")));
+              Ok((code, Some("null".to_string())))
+            },
+            "ucontrol" => {
+              let arg_count = match &right[..] {
+                "idle" => 0,
+                "stop" => 0,
+                "unbind" => 0,
+                "move" => 2,
+                "approach" => 3,
+                "boost" => 1,
+                "pathfind" => 2,
+                "autoPathfind" => 0,
+                "target" => 3,
+                "targetp" => 2,
+                "itemDrop" => 2,
+                "itemTake" => 3,
+                "payDrop" => 0,
+                "payTake" => 1,
+                "payEnter" => 0,
+                "mine" => 2,
+                "flag" => 1,
+                "build" => 5,
+                "getBlock" => 2,
+                "within" => 3,
+                _ => return err!("Unknown ucontrol command", rspan.clone()),
+              };
+              if arguments.len() != arg_count {
+                return err!(format!("Incorrect number of arguments for \"ucontrol.{right}\": expected {arg_count} arguments"), rspan.clone());
+              }
+              let (mut code, inter_names) = compile_arguments(arguments, ident_gen)?;
+              match &right[..] {
+                "getBlock" => {
+                  let name = match output_name {
+                    OutputName::Specified(n) => n,
+                    OutputName::Any => ident_gen.next_ident(),
+                    OutputName::None => return Ok((code, None)),
+                  };
+                  code.push(format!("ucontrol {right} {} 0 {name}", inter_names.join(" ")));
+                  Ok((code, Some("null".to_string())))
+                },
+                "within" => {
+                  let name = match output_name {
+                    OutputName::Specified(n) => n,
+                    OutputName::Any => ident_gen.next_ident(),
+                    OutputName::None => return Ok((code, None)),
+                  };
+                  code.push(format!("ucontrol {right} {} {name}", inter_names.join(" ")));
+                  Ok((code, Some("null".to_string())))
+                },
+                _ => {
+                  code.push(format!("ucontrol {right} {}", inter_names.join(" ")));
+                  Ok((code, Some("null".to_string())))
+                }
+              }
+            },
+            "ulocate" => {
+              let arg_count = match &right[..] {
+                "ore" => 1,
+                "spawn" => 0,
+                "damaged" => 0,
+                "building" => 2,
+                _ => return err!("Unknown ulocate command", rspan.clone()),
+              };
+              if arguments.len() != arg_count {
+                return err!(format!("Incorrect number of arguments for \"ulocate.{right}\": expected {arg_count} arguments"), rspan.clone());
+              }
+              let name = match output_name {
+                OutputName::Specified(n) => n,
+                OutputName::Any => ident_gen.next_ident(),
+                OutputName::None => return Ok((match &right[..] {
+                  "spawn" | "damaged" => vec![],
+                  "ore" | "building" => compile_expr(arguments.last().unwrap(), OutputName::None, ident_gen)?.0,
+                  _ => unreachable!()
+                }, None)),
+              };
+              let code = match &right[..] {
+                "ore" => {
+                  let (mut code, inter_names) = compile_arguments(arguments, ident_gen)?;
+                  code.push(format!("ulocate ore core 0 {} {name}@x {name}@y {name} 0", inter_names[0]));
+                  code
+                },
+                "spawn" => {
+                  vec![format!("ulocate spawn core 0 0 {name}@x {name}@y {name} 0")]
+                },
+                "damaged" => {
+                  vec![format!("ulocate damaged core 0 0 {name}@x {name}@y 0 {name}")]
+                },
+                "building" => {
+                  let ASTExpression::Leaf(Token { text: group, variant: TT::identifier, .. }) = &arguments[0] else {
+                    return err!("Expected a keyword", rspan.clone()); //TODO wrong span
+                  };
+                  let (mut code, enemy) = match &arguments[1] {
+                    ASTExpression::Leaf(Token { text, variant: TT::identifier, .. }) if matches!(&text[..], "enemy" | "ally") =>
+                      (Vec::with_capacity(1), match &text[..] {
+                        "enemy" => "true",
+                        "ally" => "false",
+                        _ => unreachable!()
+                      }.to_string()),
+                    enemy => compile_expr_to_any(&enemy, ident_gen)?,
+                  };
+                  code.push(format!("ulocate building {group} {enemy} 0 {name}@x {name}@y {name}@found {name}"));
+                  code
+                },
+                _ => unreachable!(),
+              };
+              Ok((code, Some(name)))
+            },
+            _ => err!(format!("Invalid function call: unknown namespace {left}"), lspan.clone())
+          },
+          _ => err!("Invalid function call: invalid access expression", 0..0)
+        }
+      ASTExpression::FunctionCall { .. } |
+      ASTExpression::ArrayAccess { .. } |
+      // ^^ these may become valid in the future if a function returns a function pointer
+      ASTExpression::UnaryOperator { .. } |
+      ASTExpression::TemplateString { .. } |
+      ASTExpression::BinaryOperator { .. } |
+      ASTExpression::Leaf(_) =>
+        err!("Invalid function call: invalid function expression", 0..0), //TODO fix all the ranges, i need a range in ASTExpression
+    },
     ASTExpression::ArrayAccess { target, index } => {
       let name = match output_name {
         OutputName::Specified(n) => n,
