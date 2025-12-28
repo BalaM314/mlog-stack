@@ -157,20 +157,31 @@ pub fn compile_expr(
       })
     },
     ASTExpression::UnaryOperator { operator, operand } => {
-      let name = match output_name {
-        OutputName::Specified(n) => n,
-        OutputName::Any => ident_gen.next_ident(),
-        OutputName::None => return compile_expr(operand, OutputName::None, ident_gen),
-      };
-      let (mut code, intermediate) = compile_expr_to_any(operand, ident_gen)?;
-      code.push(match operator.variant {
-        TT::operator_minus => format!("op mul {name} {intermediate} -1"),
-        TT::operator_not => format!("op equal {name} {intermediate} false"),
-        TT::operator_increment => panic!("not yet implemented"),
-        TT::operator_bitwise_flip => format!("op not {name} {intermediate} 0"),
-        _ => unreachable!()
-      });
-      Ok((code, Some(name)))
+      if operator.variant == TT::operator_increment {
+        //increment is special
+        let (mut code, inter_right) = compile_expr(operand, output_name, ident_gen)?;
+        match &inter_right {
+          Some(inter_right) => {
+            code.push(format!("op add {inter_right} {inter_right} 1"));
+          },
+          None => {},
+        }
+        Ok((code, inter_right))
+      } else {
+        let name = match output_name {
+          OutputName::Specified(n) => n,
+          OutputName::Any => ident_gen.next_ident(),
+          OutputName::None => return compile_expr(operand, OutputName::None, ident_gen),
+        };
+        let (mut code, intermediate) = compile_expr_to_any(operand, ident_gen)?;
+        code.push(match operator.variant {
+          TT::operator_minus => format!("op mul {name} {intermediate} -1"),
+          TT::operator_not => format!("op equal {name} {intermediate} false"),
+          TT::operator_bitwise_flip => format!("op not {name} {intermediate} 0"),
+          _ => unreachable!()
+        });
+        Ok((code, Some(name)))
+      }
     },
     ASTExpression::BinaryOperator { left, operator, right } => {
       //this is ugly but there is no better way until https://github.com/rust-lang/rust/issues/87121 or https://github.com/rust-lang/rust/issues/51114
