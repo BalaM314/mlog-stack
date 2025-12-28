@@ -6,7 +6,7 @@ Teams.sharded //different than vanilla, Team
 Sounds.plasmadrop
 
 x = read(`cell1`, 15)
-write(`cell1`, 15, x)
+write(`cell1`, 15, x) //todo: `cell1`[15] = `cell2`[15] (requires type information)
 draw.clear(0, 0, 0) //many overloads
 print("hello")
 printchar(67)

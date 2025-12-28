@@ -345,7 +345,22 @@ pub fn compile_expr(
             }, Some(name)))
           },
           "write" | "print" | "printchar" | "drawflush" | "printflush" | "wait" | "stop" | "end" | "ubind" => {
-            todo!();
+            let (mut code, inters) = compile_arguments(arguments, ident_gen)?;
+            code.push(match &text[..] {
+              "write" => format!("write {} {} {}", inters[3], inters[1], inters[2]),
+              "print" | "printchar" | "drawflush" | "printflush" | "wait" | "ubind" => format!("{text} {}", inters[1]),
+              "stop" | "end" => format!("{text}"),
+              _ => unreachable!(),
+            });
+            let out = match output_name {
+              OutputName::None => None,
+              OutputName::Any => Some("null".to_string()),
+              OutputName::Specified(n) => {
+                code.push(format!("set {n} null"));
+                Some(n)
+              }
+            };
+            Ok((code, out))
           },
           func => return err!(format!("Unknown function {func}\nhelp: custom functions are not yet implemented"), span.clone()), //TODO
         }
