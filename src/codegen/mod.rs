@@ -74,6 +74,10 @@ fn is_namespace_containing_functions(left:&str) -> bool {
   )
 }
 
+fn is_senseable(text:&str) -> bool {
+  matches!(text, "totalItems" | "firstItem" | "totalLiquids" | "totalPower" | "itemCapacity" | "liquidCapacity" | "powerCapacity" | "powerNetStored" | "powerNetCapacity" | "powerNetIn" | "powerNetOut" | "ammo" | "ammoCapacity" | "currentAmmoType" | "memoryCapacity" | "health" | "maxHealth" | "heat" | "shield" | "armor" | "efficiency" | "progress" | "timescale" | "rotation" | "x" | "y" | "velocityX" | "velocityY" | "shootX" | "shootY" | "cameraX" | "cameraY" | "cameraWidth" | "cameraHeight" | "displayWidth" | "displayHeight" | "bufferSize" | "operations" | "size" | "solid" | "dead" | "range" | "shooting" | "boosting" | "mineX" | "mineY" | "mining" | "speed" | "team" | "type" | "flag" | "controlled" | "controller" | "name" | "payloadCount" | "payloadType" | "totalPayload" | "payloadCapacity" | "id" | "enabled" | "config" | "color" | "scrap" | "copper" | "lead" | "graphite" | "coal" | "titanium" | "thorium" | "silicon" | "plastanium" | "phaseFabric" | "surgeAlloy" | "sporePod" | "sand" | "blastCompound" | "pyratite" | "metaglass" | "beryllium" | "tungsten" | "oxide" | "carbide" | "fissileMatter" | "dormantCyst" | "water" | "slag" | "oil" | "cryofluid" | "arkycite" | "gallium" | "neoplasm" | "ozone" | "hydrogen" | "nitrogen" | "cyanogen")
+}
+
 fn compile_operator(operator:TokenType) -> &'static str {
   use TokenType as TT;
   match operator {
@@ -187,16 +191,15 @@ pub fn compile_expr(
         TT::operator_assignment_divide => panic!("not yet implemented"),
         TT::operator_access => {
           match &**right {
-            ASTExpression::Leaf(Token { variant: TT::identifier, text, .. }) => {
-              match &text[..] {
-                "totalItems" | "firstItem" | "totalLiquids" | "totalPower" | "itemCapacity" | "liquidCapacity" | "powerCapacity" | "powerNetStored" | "powerNetCapacity" | "powerNetIn" | "powerNetOut" | "ammo" | "ammoCapacity" | "currentAmmoType" | "memoryCapacity" | "health" | "maxHealth" | "heat" | "shield" | "armor" | "efficiency" | "progress" | "timescale" | "rotation" | "x" | "y" | "velocityX" | "velocityY" | "shootX" | "shootY" | "cameraX" | "cameraY" | "cameraWidth" | "cameraHeight" | "displayWidth" | "displayHeight" | "bufferSize" | "operations" | "size" | "solid" | "dead" | "range" | "shooting" | "boosting" | "mineX" | "mineY" | "mining" | "speed" | "team" | "type" | "flag" | "controlled" | "controller" | "name" | "payloadCount" | "payloadType" | "totalPayload" | "payloadCapacity" | "id" | "enabled" | "config" | "color" | "scrap" | "copper" | "lead" | "graphite" | "coal" | "titanium" | "thorium" | "silicon" | "plastanium" | "phaseFabric" | "surgeAlloy" | "sporePod" | "sand" | "blastCompound" | "pyratite" | "metaglass" | "beryllium" | "tungsten" | "oxide" | "carbide" | "fissileMatter" | "dormantCyst" | "water" | "slag" | "oil" | "cryofluid" | "arkycite" | "gallium" | "neoplasm" | "ozone" | "hydrogen" | "nitrogen" | "cyanogen" => {
-                  code1.push(format!("sensor {name} {inter_left} @{text}"));
-                  Ok((code1, Some(name)))
-                },
-                _ => todo!()
+            ASTExpression::Leaf(Token { variant: TT::identifier, text, span }) => {
+              if is_senseable(text) {
+                code1.push(format!("sensor {name} {inter_left} @{text}"));
+                Ok((code1, Some(name)))
+              } else {
+                err!(format!("Invalid sensor statement: \"{text}\" is not a senseable property"), span.clone())
               }
             },
-            _ => panic!("RHS of an access expression must be an identifier")
+            _ => err!("RHS of an access expression must be an identifier", operator.span.clone())
           }
         },
         _ => {
