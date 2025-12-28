@@ -30,10 +30,19 @@ pub enum OutputName {
 }
 
 fn is_namespace_containing_values(left:&str) -> bool {
-  return matches!(
-    left,
+  matches!(left,
     "Blocks" | "Liquids" | "Items" | "Units" | "Teams" | "Sounds"
-  );
+  )
+}
+
+fn is_lookup_type(left:&str) -> bool {
+  matches!(left,
+    "Blocks" | "Liquids" | "Items" | "Units" | "Teams"
+  )
+}
+
+fn compile_lookup_to_argument(left:&str) -> String {
+  left[..left.len() - 1].to_ascii_lowercase()
 }
 
 /// left must be a valid value namespace
@@ -60,10 +69,9 @@ fn compile_namespace_value_access(left:&str, right:&str) -> String {
 }
 
 fn is_namespace_containing_functions(left:&str) -> bool {
-  return matches!(
-    left,
+  matches!(left,
     "draw" | "control" | "ucontrol" | "ulocate"
-  );
+  )
 }
 
 fn compile_operator(operator:TokenType) -> &'static str {
@@ -206,19 +214,35 @@ pub fn compile_expr(
         OutputName::Specified(n) => n,
         OutputName::Any => ident_gen.next_ident(),
         OutputName::None => {
-          let (mut code1, _) = compile_expr(target, OutputName::None, ident_gen)?;
-          let (code2, _) = compile_expr(index, OutputName::None, ident_gen)?;
-          code1.extend_from_slice(&code2);
-          return Ok((code1, None));
+          let (code_for_index, _) = compile_expr(index, OutputName::None, ident_gen)?;
+          //Lookup statement handling
+          if let ASTExpression::Leaf(Token { text: target, .. }) = &**target {
+            if is_lookup_type(target) {
+              return Ok((code_for_index, None));
+            }
+          }
+          let (code_for_target, _) = compile_expr(target, OutputName::None, ident_gen)?;
+          let mut code = code_for_target;
+          code.extend_from_slice(&code_for_index);
+          return Ok((code, None));
         },
       };
-      let (mut code1, Some(inter_target)) =
-        compile_expr(target, OutputName::Any, ident_gen)? else { unreachable!() };
-      let (code2, Some(inter_index)) =
+      let (code_for_index, Some(inter_index)) =
         compile_expr(index, OutputName::Any, ident_gen)? else { unreachable!() };
-      code1.extend_from_slice(&code2);
-      code1.push(format!("sensor {name} {inter_target} {inter_index}"));
-      Ok((code1, Some(name)))
+      //Lookup statement handling
+      if let ASTExpression::Leaf(Token { text: target, .. }) = &**target {
+        if is_lookup_type(target) {
+          let mut code = code_for_index;
+          code.push(format!("lookup {} {name} {inter_index}", compile_lookup_to_argument(target)));
+          return Ok((code, Some(name)));
+        }
+      }
+      let (code_for_target, Some(inter_target)) =
+        compile_expr(target, OutputName::Any, ident_gen)? else { unreachable!() };
+      let mut code = code_for_target;
+      code.extend_from_slice(&code_for_index);
+      code.push(format!("sensor {name} {inter_target} {inter_index}"));
+      Ok((code, Some(name)))
     },
     ASTExpression::TemplateString { strings, .. } => {
       return err!("MLOG does not support string concatenation", strings.first().unwrap().span.clone());
