@@ -70,7 +70,7 @@ fn compile_namespace_value_access(left:&str, right:&str) -> String {
 
 fn is_namespace_containing_functions(left:&str) -> bool {
   matches!(left,
-    "draw" | "control" | "ucontrol" | "ulocate"
+    "draw" | "control" | "ucontrol" | "ulocate" | "math"
   )
 }
 
@@ -98,7 +98,7 @@ fn compile_operator(operator:TokenType) -> &'static str {
     TT::operator_less_than_eq => "lessThanEq",
     TT::operator_equal_to => "strictEqual",
     TT::operator_loose_equal_to => "equal",
-    TT::operator_not_equal_to => "not",
+    TT::operator_not_equal_to => "notEqual",
     TT::operator_logical_and => "land",
     TT::operator_bitwise_and => "and",
     TT::operator_bitwise_xor => "xor",
@@ -112,7 +112,7 @@ fn compile_operator(operator:TokenType) -> &'static str {
     TT::operator_increment |
     TT::operator_not |
     TT::operator_bitwise_flip |
-    TT::operator_access => panic!("Operator {operator:?} cannot be compiled"),
+    TT::operator_access => panic!("Operator {operator:?} cannot be compiled to a LogicOp name"),
     _ => unreachable!(),
   }
 }
@@ -518,6 +518,25 @@ pub fn compile_expr(
                 },
                 _ => unreachable!(),
               };
+              Ok((code, Some(name)))
+            },
+            "math" => {
+              let arg_count = match &right[..] {
+                "max" | "min" | "angle" | "angleDiff" | "len" | "noise" | "logn" => 2,
+                "abs" | "sign" | "log" | "log10" | "floor" | "ceil" | "round" | "sqrt" | "rand" |
+                "sin" | "cos" | "tan" | "asin" | "acos" | "atan" => 1,
+                _ => return err!("Unknown math function", rspan.clone()),
+              };
+              if arguments.len() != arg_count {
+                return err!(format!("Incorrect number of arguments for \"math.{right}\": expected {arg_count} arguments"), rspan.clone());
+              }
+              let (mut code, inter_names) = compile_arguments(arguments, ident_gen)?;
+              let name = match output_name {
+                OutputName::Specified(n) => n,
+                OutputName::Any => ident_gen.next_ident(),
+                OutputName::None => return Ok((code, None)),
+              };
+              code.push(format!("op {right} {name} {}", inter_names.join(" ")));
               Ok((code, Some(name)))
             },
             _ => err!(format!("Invalid function call: unknown namespace {left}"), lspan.clone())
