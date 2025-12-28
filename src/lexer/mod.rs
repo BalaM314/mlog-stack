@@ -251,7 +251,7 @@ fn get_sub_tokens(input:&str) -> Result<Vec<SubToken>, CError> {
 			';' => (1, ST::punctuation_semicolon),
 			'.' => (1, ST::operator_access),
 			',' => (1, ST::punctuation_comma),
-			' ' => (1, ST::whitespace),
+			' ' | '\t' => (1, ST::whitespace),
 			'\n' => (1, ST::newline),
 			'/' => match chars.peek() {
 				Some((_, '/')) => {
