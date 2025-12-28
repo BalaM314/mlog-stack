@@ -30,8 +30,8 @@ fn compile_node(node: ASTNode, ident_gen: &mut IdentGenerator, ctx: &CompileCont
     ASTNodeData::Statement(statement) => match statement {
       ASTStatement::Expression(expr) => compile_expr(&expr, OutputName::None, ident_gen)?.0,
       ASTStatement::Declaration(declaration) => compile_declaration(declaration, ident_gen)?,
-      ASTStatement::Break => vec![format!("jump {}", ctx.break_target.as_ref().ok_or(err_!("No loop to break", node.span))?)],
-      ASTStatement::Continue => vec![format!("jump {}", ctx.continue_target.as_ref().ok_or(err_!("No loop to continue", node.span))?)],
+      ASTStatement::Break => vec![format!("jump {} always 0", ctx.break_target.as_ref().ok_or(err_!("No loop to break", node.span))?)],
+      ASTStatement::Continue => vec![format!("jump {} always 0", ctx.continue_target.as_ref().ok_or(err_!("No loop to continue", node.span))?)],
       ASTStatement::Return(expr) => {
         // compile_expr_to_any(&expr, ident_gen)?.0;
         return err!("Return is not yet implemented", node.span); //TODO
@@ -88,6 +88,7 @@ fn compile_node(node: ASTNode, ident_gen: &mut IdentGenerator, ctx: &CompileCont
           continue_target: Some(before_condition_label.clone()),
           break_target: Some(end_label.clone()),
         })?.into_iter());
+        code.push(format!("{before_condition_label}:"));
         let (code_for_condition, condition) = compile_expr_to_any(&condition, ident_gen)?;
         code.extend(code_for_condition.into_iter());
         code.push(format!("jump {loop_start_label} equal {condition} true"));
@@ -112,6 +113,7 @@ fn compile_node(node: ASTNode, ident_gen: &mut IdentGenerator, ctx: &CompileCont
           //TODO fix this span issue
           code.extend(compile_node(ASTNode { data: ASTNodeData::Statement(increment), span: 0..0 }, ident_gen, ctx)?.into_iter());
         }
+        code.push(format!("{before_condition_label}:"));
         let (code_for_condition, condition) = compile_expr_to_any(&condition, ident_gen)?;
         code.extend(code_for_condition.into_iter());
         code.push(format!("jump {loop_start_label} equal {condition} true"));
@@ -252,35 +254,33 @@ pub fn compile_expr(
   use TokenType as TT;
   match expr {
     ASTExpression::Leaf(token) => {
+      let text = match token.variant {
+        TT::identifier => &token.text,
+        TT::link => &token.text[1..token.text.len()-1],
+        TT::number => &token.text,
+        TT::string => &token.text,
+        _ => unreachable!()
+      }.to_string();
       Ok(match output_name {
-        OutputName::Specified(name) => (match token.variant {
-          TT::identifier => vec![format!("set {name} {}", token.text)],
-          TT::link => vec![format!("set {name} {}", &token.text[1..token.text.len()-1])],
-          TT::number => vec![format!("set {name} {}", token.text)],
-          TT::string => vec![format!("set {name} {}", token.text)],
-          _ => unreachable!()
-        }, Some(name)),
-        OutputName::Any => (vec![], Some(match token.variant {
-          TT::identifier => token.text.to_string(),
-          TT::link => token.text[1..token.text.len()-1].to_string(),
-          TT::number => token.text.to_string(),
-          TT::string => token.text.to_string(),
-          _ => unreachable!()
-        })),
+        OutputName::Specified(name) => (vec![format!("set {name} {text}")], Some(name)),
+        OutputName::Any => (vec![], Some(text)),
         OutputName::None => (vec![], None),
       })
     },
     ASTExpression::UnaryOperator { operator, operand } => {
       if operator.variant == TT::operator_increment {
         //increment is special
-        let (mut code, inter_right) = compile_expr(operand, output_name, ident_gen)?;
-        match &inter_right {
-          Some(inter_right) => {
-            code.push(format!("op add {inter_right} {inter_right} 1"));
+        let (mut code, inter_right) = compile_expr_to_any(operand, ident_gen)?;
+        code.push(format!("op add {inter_right} {inter_right} 1"));
+        let name = match output_name {
+          OutputName::Specified(n) => {
+            code.push(format!("set {n} {inter_right}"));
+            Some(n)
           },
-          None => {},
-        }
-        Ok((code, inter_right))
+          OutputName::Any => Some(inter_right),
+          OutputName::None => None,
+        };
+        Ok((code, name))
       } else {
         let name = match output_name {
           OutputName::Specified(n) => n,
@@ -305,7 +305,12 @@ pub fn compile_expr(
             if is_namespace_containing_functions(&left.text[..]) {
               return err!("Namespace access is invalid in this position: expected a value, not a function", left.span.start..right.span.end);
             } else if is_namespace_containing_values(&left.text[..]) {
-              return Ok((vec![], Some(compile_namespace_value_access(&left.text, &right.text))))
+              let text = compile_namespace_value_access(&left.text, &right.text);
+              return Ok(match output_name {
+                OutputName::Specified(name) => (vec![format!("set {name} {text}")], Some(name)),
+                OutputName::Any => (vec![], Some(text)),
+                OutputName::None => (vec![], None),
+              });
             }
           }
         }
@@ -335,20 +340,16 @@ pub fn compile_expr(
             },
             _ => {
               let (mut code, inter_right) = compile_expr_to_any(right, ident_gen)?;
+              code.push(format!("op add {left} {left} {inter_right}"));
               let name = match output_name {
-                OutputName::Specified(n) => n,
-                OutputName::Any => ident_gen.next_ident(),
-                OutputName::None => return Ok((code, None)),
+                OutputName::Specified(n) => {
+                  code.push(format!("set {n} {left}"));
+                  Some(n)
+                },
+                OutputName::Any => Some(left.to_string()),
+                OutputName::None => None,
               };
-              let operation = match operator.variant {
-                TT::operator_assignment_add => "add",
-                TT::operator_assignment_subtract => "sub",
-                TT::operator_assignment_multiply => "mul",
-                TT::operator_assignment_divide => "div",
-                _ => unreachable!(),
-              };
-              code.push(format!("op {operation} {name} {left} {inter_right}"));
-              Ok((code, Some(name)))
+              Ok((code, name))
             }
           }
         },
@@ -412,7 +413,7 @@ pub fn compile_expr(
             "wait" => 0,
             "stop" => 0,
             "end" => 0,
-            "ubind" => 0,
+            "ubind" => 1,
             "radar" => {
               if !(4 <= arguments.len() && arguments.len() <= 6) {
                 return err!(format!("Incorrect number of arguments for \"{text}\": expected 4 to 6 arguments"), span.clone());

@@ -1,8 +1,5 @@
 use std::{env::args, error::Error, fs};
 
-use crate::{codegen::{IdentGenerator, compile_expr}, parser::{ASTNode, ASTNodeData, ASTStatement}};
-
-
 mod lexer;
 mod parser;
 mod common;
@@ -23,19 +20,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 	match output {
 		Ok(output) => {
 			println!("Compiling:\n---\n{output}\n---\n");
-			match &output {
-				parser::ASTBlock::Root { statements } => {
-					match statements.first() {
-						Some(ASTNode { data: ASTNodeData::Statement(ASTStatement::Expression(expr)), .. }) => {
-							let mut ident_gen = IdentGenerator::new();
-							let (code, _) = compile_expr(expr, codegen::OutputName::Specified("foo".to_string()), &mut ident_gen)?;
-							println!("{}", code.join("\n"));
-						},
-						_ => {}
-					}
-				},
-				_ => {}
-			}
+			let result = codegen::compile(output)?;
+			println!("{result}");
 		},
 		Err(err) => eprintln!("{}", err.show(&data))
 	}
