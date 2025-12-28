@@ -117,6 +117,14 @@ fn compile_operator(operator:TokenType) -> &'static str {
   }
 }
 
+pub fn compile_expr_to_any(
+  expr: &ASTExpression, ident_gen: &mut IdentGenerator
+) -> Result<(Vec<String>, String), CError> {
+  compile_expr(expr, OutputName::Any, ident_gen).map(|(code, name)|
+    (code, name.unwrap())
+  )
+}
+
 pub fn compile_expr(
   expr: &ASTExpression, output_name: OutputName, ident_gen: &mut IdentGenerator
 ) -> Result<(Vec<String>, Option<String>), CError> {
@@ -147,8 +155,7 @@ pub fn compile_expr(
         OutputName::Any => ident_gen.next_ident(),
         OutputName::None => return compile_expr(operand, OutputName::None, ident_gen),
       };
-      let (mut code, Some(intermediate)) =
-        compile_expr(operand, OutputName::Any, ident_gen)? else { unreachable!() };
+      let (mut code, intermediate) = compile_expr_to_any(operand, ident_gen)?;
       code.push(match operator.variant {
         TT::operator_minus => format!("op mul {name} {intermediate} -1"),
         TT::operator_not => format!("op equal {name} {intermediate} false"),
@@ -181,8 +188,7 @@ pub fn compile_expr(
           return Ok((code1, None));
         },
       };
-      let (mut code1, Some(inter_left)) =
-        compile_expr(left, OutputName::Any, ident_gen)? else { unreachable!() };
+      let (mut code1, inter_left) = compile_expr_to_any(left, ident_gen)?;
       match operator.variant {
         TT::operator_assignment |
         TT::operator_assignment_add |
@@ -203,8 +209,7 @@ pub fn compile_expr(
           }
         },
         _ => {
-          let (code2, Some(inter_right)) =
-            compile_expr(right, OutputName::Any, ident_gen)? else { unreachable!() };
+          let (code2, inter_right) = compile_expr_to_any(right, ident_gen)?;
           code1.extend_from_slice(&code2);
           code1.push(format!("op {} {name} {inter_left} {inter_right}", compile_operator(operator.variant)));
           Ok((code1, Some(name)))
