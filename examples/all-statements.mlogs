@@ -1,0 +1,50 @@
+Blocks.coreNucleus
+Liquids.nitrogen
+Items.copper
+Units.gamma //different than vanilla, UnitTypes
+Teams.sharded //different than vanilla, Team
+Sounds.plasmadrop
+
+x = read(`cell1`, 15)
+write(`cell1`, 15, x)
+draw.clear(0, 0, 0) //many overloads
+print("hello")
+printchar(67)
+drawflush(`display1`)
+printflush(`message1`)
+x = getlink(5)
+control.enabled(`smelter1`, false)
+control.disable(`smelter2`)
+control.shoot(`spectre1`, x, y, true)
+control.shootp(`spectre1`, unit, true)
+control.config(`sorter1`, Items.copper)
+control.color(`illuminator1`, 0xFF, 0x00, 0xFF)
+enemy = radar(`hail1`, enemy, flying, guardian, max, maxHealth)
+enemy = radar(`hail1`, enemy, 1, maxHealth)
+//all the different `op`s
+//put them under Math or leave them as global functions?
+x = select(y > 5, 10, -1)
+thing = Items[5] //lookup: Blocks, Liquids, Items, Units, Teams
+color = packColor(0xFF, 0x00, 0xFF, 0x80)
+//unpack color is not currently supported as it would require destructuring assignment syntax and is very rarely useful
+wait(0.5)
+stop()
+end()
+//jump not supported
+//maybe add goto and labels in the future, but this would confuse the stack allocation
+ubind(Units.poly)
+ucontrol.itemDrop(`nucleus1`, 999)
+close = ucontrol.within(100, 100, 1)
+build = ucontrol.getblock(100, 100) //TODO support reading floor and block
+enemy = uradar(enemy, flying, guardian, max, maxHealth)
+enemy = uradar(enemy, 1, maxHealth)
+
+found = ulocate.ore(Items.copper) //TODO! reading outX and outY is unsupported, this is pretty important...
+found = ulocate.spawn()
+build = ulocate.damaged()
+build = ulocate.building(core, true) //TODO reading outX and outY is unsupported, also found
+build = ulocate.building(repair, false)
+build = ulocate.building(generator, enemy)
+build = ulocate.building(turret, ally)
+
+//all world statements unsupported for now
